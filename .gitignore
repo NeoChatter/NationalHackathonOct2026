@@ -1,0 +1,23 @@
+# Data (excluded from repo per request)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ML artifacts / large binaries
+*.h5
+*.mcap
+*.ckpt
+*.pt
+*.pth
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
