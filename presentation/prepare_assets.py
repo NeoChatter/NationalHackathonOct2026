@@ -6,10 +6,17 @@ Nothing here is synthetic: both images come from the provided recordings.
 
     python presentation/prepare_assets.py            # from the repository root
 
+<<<<<<< HEAD
 Writes to presentation/assets/ (input paths from config.toml, $RACING_CONFIG to use another config):
     night_fast.jpg   camera_fl, full resolution, training (night) session, car at ~39 m/s   ([paths].bag)
     day_sample.jpg   camera_fl, full resolution, daylight jury sample (illustration only)   ([paths].day_sample_bag)
     facts.json       numbers measured from the training cache (shown on slide 1)           ([paths].cache)
+=======
+Writes to presentation/assets/:
+    night_fast.jpg   camera_fl, full resolution, training (night) session, car at ~39 m/s   (data/*.mcap)
+    day_sample.jpg   camera_fl, full resolution, daylight jury sample                       (data/rosbag_*/*.mcap)
+    facts.json       numbers measured from data/training_cache.h5 (shown on slide 1)
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 """
 import io
 import json
@@ -19,6 +26,7 @@ import h5py
 import numpy as np
 from PIL import Image
 
+<<<<<<< HEAD
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +38,14 @@ OUT = os.path.join(ROOT, 'presentation', 'assets')
 NIGHT_BAG = _CFG.path('bag')
 DAY_BAG = _CFG.path('day_sample_bag')
 CACHE = _CFG.path('cache')
+=======
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = os.path.join(ROOT, 'presentation', 'assets')
+NIGHT_BAG = os.path.join(ROOT, 'data', 'c0_2026-10-13_22-53-42_camloc_0.mcap')
+DAY_BAG = os.path.join(ROOT, 'data', 'rosbag_2026-10-13_16-08-46_cameras_lap',
+                       'rosbag_2026-10-13_16-08-46_cameras_lap_0.mcap')
+CACHE = os.path.join(ROOT, 'data', 'training_cache.h5')
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 FL_TOPIC = '/constructor0/sensor/camera_fl/compressed_image'
 
 

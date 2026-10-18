@@ -9,10 +9,13 @@ __pycache__/
 venv/
 env/
 
+<<<<<<< HEAD
 # run outputs (smoke test, submissions, telemetry, stress runs, provenance sidecars, hash cache)
 runs/
 stress/
 
+=======
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 # ML artifacts / large binaries
 *.h5
 *.mcap
@@ -32,7 +35,12 @@ Thumbs.db
 # Jupyter autosave copies and Office lock files (created while a document is open)
 .ipynb_checkpoints/
 ~$*
+<<<<<<< HEAD
 # Ground truth exported from the organisers' recording (regenerate with stage 1 / tools/gt_window.py)
 results/gt*.csv
 # server-specific config overlays (keep config.toml generic)
 server*.toml
+=======
+# Ground truth exported from the organisers' recording (regenerate with tools/extract_gt.py / tools/gt_window.py)
+results/gt*.csv
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510

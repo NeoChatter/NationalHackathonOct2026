@@ -3,9 +3,14 @@
 Trajectory visualisation, error analysis and metrics for a pose file (the jury asked for a visualisation).
 
 With ground truth (validation laps):
+<<<<<<< HEAD
     python tools/visualize.py --pred results/poses/val_block_poses.csv --gt data/gt.csv \
         --checkpoint checkpoints/racing_model_val_cal.pt \
         --telemetry results/poses/val_block_poses_telemetry.csv --out-dir results/validation
+=======
+    python tools/visualize.py --pred submission.csv --gt gt.csv \
+        --checkpoint checkpoints/racing_model.pt --telemetry inference_telemetry.csv --out-dir results/figures
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 
 Without ground truth (a run on a recording that has no pose topic): omit --gt. The plot then shows the estimate on
 the track borders only, with no error numbers.
@@ -181,14 +186,19 @@ def main():
         sim_ax = axs[0]
     if tele is not None and 'top1_sim' in tele:
         tt = (tele['timestamp_ns'] - ts[0]) * 1e-9
+<<<<<<< HEAD
         sim_col = next(c for c in ('top1_global', 'global_sim', 'top1_sim') if c in tele)   # combined, rmse-2.740, any
         sim_ax.plot(tt, tele[sim_col], 'C0', lw=0.9, label='best similarity to the map')
+=======
+        sim_ax.plot(tt, tele['global_sim'] if 'global_sim' in tele else tele['top1_sim'], 'C0', lw=0.9, label='best similarity to the map')
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
         sim_ax.set_ylabel('similarity')
         sim_ax.set_ylim(0.3, 1.0)
         if 'still' in tele:
             still = tele['still'] == 1
             sim_ax.fill_between(tt, 0.3, 1.0, where=still, color='green', alpha=0.15, label='standstill hold')
         if 'mode' in tele:
+<<<<<<< HEAD
             modes = np.asarray([str(m) for m in tele['mode']])
             init = modes == 'INITIALIZING'                                   # combined pipeline (lib/tracker.py)
             if init.any():
@@ -203,6 +213,12 @@ def main():
             nov = np.asarray(tele['visual_update']) == 0
             if nov.any():
                 sim_ax.fill_between(tt, 0.3, 1.0, where=nov, color='gray', alpha=0.25, label='no visual update (stale camera)')
+=======
+            reloc = np.array([m == 'RELOCALIZED' for m in tele['mode']])
+            sim_ax.fill_between(tt, 0.3, 1.0, where=reloc, color='red', alpha=0.3, label='global relocalization')
+            vo_only = np.array([m == 'VO_ONLY' for m in tele['mode']])
+            sim_ax.fill_between(tt, 0.3, 1.0, where=vo_only, color='gray', alpha=0.15, label='odometry only (no map match)')
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
         sim_ax.legend(fontsize=8, ncol=3, loc='lower left')
     else:
         sim_ax.text(0.5, 0.5, 'pass --telemetry to see similarity and filter mode', ha='center', va='center',

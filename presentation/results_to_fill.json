@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
   "_help": "Fill these in after you have run the final pipeline; null = placeholder is shown on the slides. Sources: tools/visualize.py metrics.txt (validation), the [TIMING] line printed by Scripts/4_infer.py (ms per frame).",
+=======
+  "_help": "Fill these in after you have run the final pipeline; null = placeholder is shown on the slides. Sources: tools/visualize.py metrics.txt (validation), the [TIMING] line printed by Scripts/3_causal_infer.py (ms per frame).",
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
   "team_name": null,
   "repo_url": null,
   "val_position_rmse_m": null,

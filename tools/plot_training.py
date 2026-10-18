@@ -2,9 +2,15 @@
 """
 Plot how training improved, epoch by epoch.
 
+<<<<<<< HEAD
     python tools/plot_training.py checkpoints/racing_model_val_history.csv --out results/figures/training_progress.png
 
 Reads the history CSV that Scripts/2_train.py rewrites after every epoch (so it also works on a run that is
+=======
+    python tools/plot_training.py checkpoints/racing_model_history.csv --out results/figures/training_progress.png
+
+Reads the history CSV that Scripts/2_train_model.py rewrites after every epoch (so it also works on a run that is
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 still going or crashed). Panels that need held-out metrics are skipped when the run used --full-train.
 """
 import argparse

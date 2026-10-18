@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Pinned environment of the training server (Linux x86_64, NVIDIA CUDA 13 wheels), from the rmse-2.740 branch,
 # plus scipy (used by lib/track_map, lib/tracker, lib/data, lib/metrics; missing from that branch's pins).
 # Python >= 3.11 (numpy 2.4.6, scipy 1.17.1, pandas 3.0.6; tomllib for config.toml).
@@ -7,6 +8,12 @@ contourpy==1.3.3
 cuda-bindings==13.4.4; sys_platform == "linux"
 cuda-pathfinder==1.8.3; sys_platform == "linux"
 cuda-toolkit==13.0.3.0; sys_platform == "linux"
+=======
+contourpy==1.3.3
+cuda-bindings==13.4.4
+cuda-pathfinder==1.8.3
+cuda-toolkit==13.0.3.0
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 cycler==0.12.1
 filelock==4.2.1
 fonttools==4.67.0
@@ -23,6 +30,7 @@ mpmath==1.3.0
 narwhals==2.27.1
 networkx==3.6.1
 numpy==2.4.6
+<<<<<<< HEAD
 nvidia-cublas==13.1.1.3; sys_platform == "linux"
 nvidia-cuda-cupti==13.0.85; sys_platform == "linux"
 nvidia-cuda-nvrtc==13.0.88; sys_platform == "linux"
@@ -38,6 +46,23 @@ nvidia-nccl-cu13==2.30.7; sys_platform == "linux"
 nvidia-nvjitlink==13.4.92; sys_platform == "linux"
 nvidia-nvshmem-cu13==3.4.5; sys_platform == "linux"
 nvidia-nvtx==13.0.85; sys_platform == "linux"
+=======
+nvidia-cublas==13.1.1.3
+nvidia-cuda-cupti==13.0.85
+nvidia-cuda-nvrtc==13.0.88
+nvidia-cuda-runtime==13.0.96
+nvidia-cudnn-cu13==9.24.0.43
+nvidia-cufft==12.0.0.61
+nvidia-cufile==1.15.1.6
+nvidia-curand==10.4.0.35
+nvidia-cusolver==12.0.4.66
+nvidia-cusparse==12.6.3.3
+nvidia-cusparselt-cu13==0.8.1
+nvidia-nccl-cu13==2.30.7
+nvidia-nvjitlink==13.4.92
+nvidia-nvshmem-cu13==3.4.5
+nvidia-nvtx==13.0.85
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 opencv-python==5.0.0.93
 packaging==26.3
 pandas==3.0.6
@@ -45,11 +70,18 @@ pillow==13.0.0
 plotly==7.1.0
 pyparsing==3.3.3
 python-dateutil==2.9.0.post0
+<<<<<<< HEAD
 scipy==1.17.1
+=======
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 six==1.17.0
 sympy==1.14.0
 torch==2.14.1
 torchvision==0.29.1
+<<<<<<< HEAD
 triton==3.8.0; sys_platform == "linux"
+=======
+triton==3.8.0
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 typing_extensions==4.16.0
 zstandard==0.25.0

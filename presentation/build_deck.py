@@ -77,7 +77,11 @@ def load_results():
     template = {
         '_help': 'Fill these in after you have run the final pipeline; null = placeholder is shown on the slides. '
                  'Sources: tools/visualize.py metrics.txt (validation), the [TIMING] line printed by '
+<<<<<<< HEAD
                  'Scripts/4_infer.py (ms per frame).',
+=======
+                 'Scripts/3_causal_infer.py (ms per frame).',
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
         'team_name': None,
         'repo_url': None,
         'val_position_rmse_m': None,
@@ -329,7 +333,11 @@ def slide_idea(prs):
     arrow(s, fx + fw + 0.04, cy, ox - 0.04, cy, color=GREEN, width=3)
 
     defs = [('Fingerprint', 'A list of 256 numbers describing a view. Similar views give similar numbers.'),
+<<<<<<< HEAD
             ('Map', 'Every training frame stored with its fingerprint and its known position.'),
+=======
+            ('Map', 'Every training frame stored with its fingerprint and its known position, night and synthetic daylight.'),
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
             ('Kalman filter', 'A standard way to blend a prediction with a measurement, trusting each by its confidence.')]
     dw = (CONTENT_W - 2 * 0.25) / 3
     for i, (term, desc) in enumerate(defs):
@@ -355,9 +363,15 @@ def slide_answers(prs):
 
     rows = [
         ('Trained at night, tested in unknown light',
+<<<<<<< HEAD
          'Lighting augmentation, robust inputs',
          'Training images get random lighting, shadows, glare and haze; every camera image is contrast-normalised.',
          'train + run time'),
+=======
+         'Synthetic daylight for training',
+         'A CycleGAN turns night frames into daylight look-alikes; the map stores both.',
+         'training only'),
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
         ('Look-alike straights',
          'Learn places, then trust by similarity',
          'Training pairs show one place on different laps. Weak matches count less; only nearby matches are averaged.',
@@ -368,7 +382,11 @@ def slide_answers(prs):
          'every frame'),
         ('Drift, and getting lost',
          'Motion from the car, global re-lock',
+<<<<<<< HEAD
          'Calibrated speed and turn rate drive the prediction. A filter over the whole lap finds the start and re-locks.',
+=======
+         'Speed and turn rate drive the prediction. Three confident matches elsewhere trigger a re-lock.',
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
          'every frame'),
     ]
     y0, rh, step = 1.85, 1.05, 1.15
@@ -392,10 +410,17 @@ def slide_answers(prs):
 
     set_notes(s, """
 Each part answers a difficulty the organisers named.
+<<<<<<< HEAD
 Night versus unknown light: training images get random lighting, shadows, glare and haze, and every camera image is contrast-normalised, in training and at run time.
 Look-alike straights: we train on same-place, different-lap pairs and trust a weak match less.
 Timing: a tenth of a second is four metres, so each camera contributes only its newest image no later than now.
 Drift and getting lost: motion comes from the car's calibrated speed and turn rate. We do not assume a start pose: a filter over the whole lap compares each view with the entire map and commits once one place clearly wins; the same filter re-locks the car when it is lost.
+=======
+Night versus unknown light: a CycleGAN turns our night frames into synthetic daylight. That is training only, so it costs nothing at run time.
+Look-alike straights: we train on same-place, different-lap pairs and trust a weak match less.
+Timing: a tenth of a second is four metres, so each camera contributes only its newest image no later than now.
+Drift and getting lost: motion comes from the car, and several confident matches elsewhere trigger a re-lock. We do not assume a start pose: we track twenty-four candidates and keep the best.
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 Now the evidence.
 """)
 
@@ -504,10 +529,17 @@ def slide_failures(prs):
          'Response: trust the map match more. Next: match short sequences of views.'),
         ('Places not on the map',
          'An earlier validation run ended parked on an unmapped spot: 88% of its squared error came from the last 9 seconds.',
+<<<<<<< HEAD
          'Response: track map with the pit corridor, standstill handling, whole-lap re-lock. Not yet re-measured.'),
         ('Unseen daylight',
          'Lighting augmentation is a proxy, not a measurement. The daylight sample has no ground-truth poses to score against.',
          'Response: lighting augmentation, robust normalisation, a match test relative to the lap, speed from the car.'),
+=======
+         'Response: similarity check, hold-still rule, global re-lock. Not yet re-measured.'),
+        ('Unseen daylight',
+         'Synthetic daylight is generated, not measured. The daylight sample has no ground-truth poses to score against.',
+         'Response: lighting augmentation and night-to-day data; check speed against recorded telemetry.'),
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
     ]
     for i, (title, body, response) in enumerate(cards):
         x = MARGIN + i * (cw + gap)
@@ -531,8 +563,13 @@ def slide_failures(prs):
     set_notes(s, """
 Three failure cases, honestly.
 One, look-alike straights. Along-track error is still our weak spot: even after tuning, five percent of frames are still more than twenty metres off.
+<<<<<<< HEAD
 Two, places the map has never seen. In an earlier validation run the car ended parked on an unmapped spot, and nearly nine-tenths of the squared error came from the last nine seconds. We have since added a track map with the pit corridor, standstill handling and a whole-lap re-lock, but we have not re-measured that yet.
 Three, daylight. Our lighting augmentation is a proxy, not a measurement, and the daylight sample has no ground-truth poses to score against.
+=======
+Two, places the map has never seen. In an earlier validation run the car ended parked on an unmapped spot, and nearly nine-tenths of the squared error came from the last nine seconds. We have since added a similarity check, a hold-still rule and a global re-lock, but we have not re-measured that yet.
+Three, daylight. Our synthetic daylight is generated, not measured, and the daylight sample has no ground-truth poses to score against.
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 Lessons next.
 """)
 
@@ -571,6 +608,7 @@ def diagram_light(s, x, y, w, h):
     gap = (w - 0.4 - 3 * sq) / 2
     xs = [x + 0.2 + i * (sq + gap) for i in range(3)]
     box(s, xs[0], sy, sq, sq, fill='1E2630', name='Night sample', radius=0.12)
+<<<<<<< HEAD
     box(s, xs[1], sy, sq, sq, fill='8FA3B8', name='Augmented night sample', radius=0.12)
     box(s, xs[2], sy, sq, sq, fill='DCE4EC', line=AMBER_L, line_w=1.5, dash=True, name='Real daylight sample', radius=0.12,
         paras=[P('?', size=20, bold=True, color=AMBER, align=PP_ALIGN.CENTER)], margins=(0, 0, 0, 0))
@@ -578,6 +616,15 @@ def diagram_light(s, x, y, w, h):
     arrow(s, xs[1] + sq + 0.05, sy + sq / 2, xs[2] - 0.05, sy + sq / 2, color=AMBER_L, width=2, dash=True, name='Unverified')
     ly = sy + sq + 0.1
     for i, (label, col) in enumerate((('night', INK), ('augmented', GREY), ('real day', AMBER))):
+=======
+    box(s, xs[1], sy, sq, sq, fill='8FA3B8', name='Synthetic daylight sample', radius=0.12)
+    box(s, xs[2], sy, sq, sq, fill='DCE4EC', line=AMBER_L, line_w=1.5, dash=True, name='Real daylight sample', radius=0.12,
+        paras=[P('?', size=20, bold=True, color=AMBER, align=PP_ALIGN.CENTER)], margins=(0, 0, 0, 0))
+    arrow(s, xs[0] + sq + 0.05, sy + sq / 2, xs[1] - 0.05, sy + sq / 2, color=GREY, width=2, name='Generated')
+    arrow(s, xs[1] + sq + 0.05, sy + sq / 2, xs[2] - 0.05, sy + sq / 2, color=AMBER_L, width=2, dash=True, name='Unverified')
+    ly = sy + sq + 0.1
+    for i, (label, col) in enumerate((('night', INK), ('synthetic', GREY), ('real day', AMBER))):
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
         text(s, xs[i] - 0.35, ly, sq + 0.7, 0.3, [P(label, size=14, bold=True, color=col, align=PP_ALIGN.CENTER)],
              name=f'Label: {label}')
 
@@ -613,7 +660,11 @@ def slide_lessons(prs, res):
     box(s, MARGIN, sy, CONTENT_W, 1.05, fill=PANEL, name='Declared and reproducible', anchor=MSO_ANCHOR.MIDDLE,
         margins=(0.2, 0.06, 2.8, 0.06),
         paras=[P([('Declared pre-trained model: ', {'bold': True}), ('ImageNet ResNet-18 (torchvision). ', {}),
+<<<<<<< HEAD
                   ('No external datasets; the daylight sample appears only as a slide photo.', {})], size=14, after=2),
+=======
+                  ('Unlabelled daylight-sample frames train the night-to-day translator.', {})], size=14, after=2),
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
                P('Code, README and requirements.txt are in the repository.', size=14, color=GREY)])
     if res['repo_url']:
         text(s, SLIDE_W - MARGIN - 2.6, sy, 2.45, 1.05, [P(res['repo_url'], size=14, bold=True, color=BLUE, align=PP_ALIGN.RIGHT)],
@@ -624,7 +675,11 @@ def slide_lessons(prs, res):
     set_notes(s, """
 Three lessons. Diagnose before you train: one offline tool told us the fault was the filter, not the network. Calibrated trust beats a bigger model: two settings gave minus forty-four percent. And use every signal the rules allow: the car's speed and turn rate do not depend on light.
 Next, we would match short sequences of views instead of single frames, and refine the position geometrically once the place is known, which is the path to sub-metre accuracy.
+<<<<<<< HEAD
 Everything is in the repository with a README and requirements. The one pre-trained model is ImageNet ResNet-18, declared here; there is no external data, and the daylight sample is only the photo on the first slide.
+=======
+Everything is in the repository with a README and requirements. The one pre-trained model is ImageNet ResNet-18, declared here, and daylight-sample frames are used as unlabelled pixels only.
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 Thank you.
 """)
 

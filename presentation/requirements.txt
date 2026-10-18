@@ -1,9 +1,16 @@
+<<<<<<< HEAD
 # Slide deck only (presentation/prepare_assets.py, presentation/build_deck.py). numpy aligned with ../requirements.txt.
 python-pptx==1.0.2
 pillow==13.0.0
 lxml==6.1.3
 XlsxWriter==3.2.9
 numpy==2.4.6
+=======
+python-pptx==1.0.2
+pillow==13.0.0
+lxml==6.1.3
+numpy==2.5.4
+>>>>>>> c1b8fc7e4529440db336b6be6f1d9b1054f58510
 h5py==3.16.0
 mcap==1.5.0
 mcap-ros2-support==0.5.7

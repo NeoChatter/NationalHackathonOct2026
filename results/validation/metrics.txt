@@ -1,0 +1,14 @@
+pose file: results/poses/val_block_poses.csv
+poses_evaluated                  2199
+coverage_pct                     100.0000
+position_rmse_m                  2.7397
+position_median_m                0.9436
+position_p95_m                   7.3988
+lateral_rmse_m                   2.0400
+longitudinal_rmse_m              1.8288
+yaw_rmse_deg                     0.8725
+within_0.25m_pct                 5.1387
+within_0.5m_pct                  15.5070
+within_1m_pct                    53.2970
+within_2m_pct                    84.2201
+within_5m_pct                    90.6321
