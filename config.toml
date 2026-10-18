@@ -1,0 +1,139 @@
+# combinedrelease configuration: the ONE place for paths, seeds and hyperparameters.
+#
+# Every script reads this file: --config PATH, else $RACING_CONFIG, else <repo>/config.toml.
+# Command-line flags still override single values for one run.
+# Relative paths are relative to [paths].root ("" = the repository root, the folder that holds this file).
+# $VAR / ${VAR} and ~ are expanded in every path, so a server config can use e.g. "$DATA_ROOT/...".
+# A config file may start with   extends = "config.toml"   and then only list the keys it changes.
+
+[paths]
+root = ""
+data_dir = "data"
+bag = "data/c0_2026-10-13_22-53-42_camloc_0.mcap"            # organisers' training recording (night)
+test_bag = ""                                                # hidden test recording: set on the server / pass --test-bag
+day_sample_bag = "data/rosbag_2026-10-13_16-08-46_cameras_lap/rosbag_2026-10-13_16-08-46_cameras_lap_0.mcap"  # slides only
+cache = "data/training_cache.h5"
+gt_csv = "data/gt.csv"                                       # full-run ground truth, written by stage 1
+val_checkpoint = "checkpoints/racing_model_val.pt"           # validation model (2 laps held out)
+val_checkpoint_cal = "checkpoints/racing_model_val_cal.pt"   # ... after stage 3
+checkpoint = "checkpoints/racing_model.pt"                   # submission model (--full-train)
+checkpoint_cal = "checkpoints/racing_model_cal.pt"           # ... after stage 3
+results_dir = "results"
+runs_dir = "runs"
+stress_dir = "stress"
+hash_cache = "runs/.sha256_cache.json"                       # provenance: cached full SHA-256 of big inputs
+
+[run]
+seed = 0                    # same seed as the rmse-2.740 reference run
+device = "auto"             # auto | cuda | cpu
+deterministic = false       # true = cuDNN deterministic kernels (slower; the reference run did not set it)
+
+[build]
+buffer_len = 64             # images kept per camera for the causal selection (same value at inference)
+
+[split]                     # validation protocol of the rmse-2.740 reference (analysis section 6, Answers ruling 2)
+val_mode = "block"          # block = whole laps from the middle of the run; tail = last 20 % (rmse-4.363 protocol)
+val_laps = 2
+val_start_frac = 0.40
+val_guard_s = 5.0           # seconds on each side of the block kept out of training AND the place database
+
+[train]                     # RacingLocNet recipe of the rmse-2.740 reference (V)
+epochs = 20
+batch_size = 64             # must be even (paired batches)
+lr = 3e-4
+weight_decay = 1e-4
+workers = 4
+eval_every = 1              # held-out metrics every N epochs -> <checkpoint>_history.csv
+max_batches_per_epoch = 0   # 0 = full epochs (the smoke test uses a few batches)
+pretrained = true           # ImageNet ResNet-18 initialisation (torchvision, downloaded once into $TORCH_HOME)
+embed_dim = 256
+vo_mode = "early"
+still_prob = 0.10
+noise_std = 0.04
+pair_sampler = true
+pair_radius_m = 3.0
+pair_yaw_deg = 10.0
+pair_min_gap_s = 15.0
+loss_w_contrastive = 0.5
+loss_w_aux = 0.5
+
+[preproc]                   # stored in the checkpoint; calibration and inference follow it automatically
+clahe = true                # S: local contrast equalisation (Answers ruling 7)
+norm = "robust"             # S: per-camera median/MAD (ruling 7, Q11). "std" = mean/std as in the 2.740 model
+
+[augment]
+photo_aug = 1.0             # V PhotometricAugment strength (0 = off)
+photo_aug_p = 0.85          # probability a training sample gets it
+structured_p = 0.5          # probability of S's structured lighting effects on top (0 = off; Q11)
+
+[calib]                     # retrieval noise / similarity threshold measured at the end of stage 2
+source = "train_crosspass"  # train_crosspass: training frames vs. the database minus +-exclude_s (no validation laps)
+                            # val: S's original measurement on the held-out laps (leaks the scored laps)
+exclude_s = 20.0
+query_stride = 5
+gate_m = 35.0
+
+[calibrate]                 # stage 3
+odom = true                 # visual-odometry bias curve + noise (fitted on the TRAINING split)
+se = true                   # speed / yaw-rate scale + bias + noise (fitted on the TRAINING split)
+track = true                # track map (centre line, borders, pit corridor, heading prior)
+ds = 1.0                    # track-map station spacing [m]
+min_lap_len_m = 500.0       # shortest closed lap accepted as the track-map reference lap
+vo_max_pairs = 4000         # training frame pairs used for the VO bias curve (evenly subsampled)
+
+[infer]                     # stage 4 run-level options
+init = "global"             # global = start found from the images (no start pose)
+odom = "auto"               # auto = speed/yaw rate, visual odometry where they are missing or implausible
+reloc = "sfilter"           # sfilter (along-track grid filter) | legacy
+topk = 8                    # retrieval candidates passed to the EKF update
+min_gate_candidates = 5
+max_cam_age_ms = 300        # older companion image (or a missing camera) -> no visual update that frame, pose still written
+preload_s = 10.0            # --val-only: start reading the bag this long before the validation block
+vo_health_check = true      # run the learned VO every frame to cross-check the telemetry (monitoring only)
+memory = false              # S experience memory: off (regressed matched conditions, Answers Q11)
+adaptive_sim = false        # off (Q11)
+adabn = 0.0                 # test-time BatchNorm momentum, 0 = off (Q11)
+
+[tracker]                   # constants of lib/tracker.py + lib/sfilter.py. Calibrated values (retr_*_std, sim_thresh,
+                            # odom_*_std, se) come from the checkpoint; a key listed here overrides the checkpoint.
+sim_floor = 0.80
+border_margin = 0.5
+clamp_skip_m = 15.0
+heading_prior = true
+heading_prior_floor_deg = 2.0
+heading_prior_inflate = 10.0
+heading_prior_gate_deg = 30.0
+adaptive_sim_max_shift = 0.20
+adaptive_sim_deadband = 0.03
+trusted_start_frames = 50
+init_timeout_frames = 300
+init_timeout_mass = 0.3
+still_mps = 0.5
+still_update_every = 20
+lost_k_relax = 0.05
+lost_lat_pull = 0.10
+heading_prior_inflate_lost = 2.0
+se_frac_sigma = 0.02
+sf_beta = 0.3
+sf_z_lo = -2.0
+sf_z_hi = 10.0
+sf_frac_sigma = 0.10
+sf_base_sigma = 0.3
+sf_eps = 1e-3
+sf_anchor_sigma = 5.0
+sf_window = 10.0
+sf_far = 50.0
+sf_mass_min = 0.6
+sf_margin_min = 2.0
+sf_confirm = 5
+sf_consist_m = 4.0
+
+[evaluate]
+block = 200                 # frames per error slice in 5_evaluate.py
+
+[stress]
+quick = true                # one scenario per family (10 runs); false = all 26
+seed = 0
+
+[provenance]
+full_sha256 = true          # full SHA-256 of every input (cached per path/size/mtime in [paths].hash_cache)
