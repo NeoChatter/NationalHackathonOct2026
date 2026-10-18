@@ -84,10 +84,9 @@ python run_submission.py submit --test-bag <TEST.mcap>  # stages 2-4, all frames
 
 Held-out laps of the training run (frames 4777–6975, 220 s), validation model, no initial pose:
 
-| | Position RMSE [m] | Median / p95 [m] | Lateral [m] | Longitudinal [m] | Yaw [deg] | < 1 m |
-|---|---|---|---|---|---|---|
-| combined release | `<ADD AFTER RUN>` | | | | | |
-| reference: V branch (2.740 m) | 2.740 | 0.944 / 7.399 | 2.040 | 1.829 | 0.872 | 53.3 % |
+| Position RMSE [m] | Median / p95 [m] | Lateral [m] | Longitudinal [m] | Yaw [deg] | < 1 m |
+|---|---|---|---|---|---|
+| 3.639 | 0.753 / 10.641 | 2.504 | 2.640 | 0.731 | 62.21 % |
 
 ---
 
