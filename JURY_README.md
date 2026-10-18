@@ -3,7 +3,7 @@
 **Team:** Vidya Sagar Vepa and Shubhangee Singhal · **Challenge:** Constructor Labs, Camera-based Localization on a Race Track  
 **Repository:** https://github.com/NeoChatter/NationalHackathonOct2026
 
-Quick links: [Submission items](#1-submission-items) · [Setup & downloads](#2-setup--downloads) · [Run inference](#3-run-inference) · [Full reproduction](#4-full-reproduction) · [Method](#5-how-the-method-works) · [Results](#6-results)
+Quick links: [Setup & downloads](#2-setup--downloads) · [Run inference](#3-run-inference) · [Full reproduction](#4-full-reproduction) · [Method](#5-how-the-method-works) · [Results](#6-results)
 
 ---
 
