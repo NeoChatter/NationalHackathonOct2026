@@ -18,8 +18,8 @@ Quick links: [Submission items](#1-submission-items) · [Setup & downloads](#2-s
 | Training progress | `results/figures/training_progress.png` |
 | Robustness suite | `stress/run/summary.md` |
 | Reference result (V branch, 2.740 m) | [`results/reference_v2.740/`](results/reference_v2.740) |
-| Slides | `presentation/project-overview.pdf` |
-| Video (≤ 5 min) | `<LINK PLACEHOLDER>` |
+| Slides | [presentation/project-overview.pdf](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
+| Video (≤ 5 min) | [video](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
 
 ---
 
@@ -34,10 +34,10 @@ Quick links: [Submission items](#1-submission-items) · [Setup & downloads](#2-s
 
 | File | Location | Download |
 |---|---|---|
-| Submission model (all frames, calibrated) | `checkpoints/racing_model_cal.pt` | `<LINK PLACEHOLDER>` |
-| Validation model (held-out laps, calibrated) | `checkpoints/racing_model_val_cal.pt` | `<LINK PLACEHOLDER>` |
-| Training recording | `data/c0_2026-10-13_22-53-42_camloc_0.mcap` | `<provided by organisers>` |
-| Training cache (optional, skips stage 1) | `data/training_cache.h5` | `<LINK PLACEHOLDER>` |
+| Submission model (all frames, calibrated) | `checkpoints/racing_model_cal.pt` | [download](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
+| Validation model (held-out laps, calibrated) | `checkpoints/racing_model_val_cal.pt` | [download](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
+| Training recording | `data/c0_2026-10-13_22-53-42_camloc_0.mcap` | [download](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
+| Training cache (optional, skips stage 1) | `data/training_cache.h5` | [download](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
 
 **Verify setup:** `python run_submission.py smoke` (runs all stages on synthetic data, ~minutes)
 
