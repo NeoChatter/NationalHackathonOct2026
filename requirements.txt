@@ -1,0 +1,7 @@
+torch
+torchvision
+mcap
+mcap-ros2-support
+numpy
+opencv-python
+h5py
