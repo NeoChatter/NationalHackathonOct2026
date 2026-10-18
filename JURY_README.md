@@ -11,15 +11,15 @@ Quick links: [Submission items](#1-submission-items) · [Setup & downloads](#2-s
 
 | Item | Location |
 |---|---|
-| Source code | [`Scripts/`](Scripts) (stages 1-6 + `lib/`), [`tools/`](tools) (scoring, visualisation), [`run_submission.py`](run_submission.py) |
+| Source code | `Scripts/` (stages 1-6 + `lib/`), `tools/` (scoring, visualisation), `run_submission.py` |
 | Pose files | `results/poses/val_block_poses.csv` (held-out laps), `results/poses/test_poses.csv` |
 | Validation results | `results/validation/official_score.txt`, `metrics.txt`, `results/poses/val_block_poses.csv.eval.json` |
 | Trajectory visualisation | `results/validation/`: `trajectory.png`, `error_timeline.png`, `error_distribution.png` |
 | Training progress | `results/figures/training_progress.png` |
 | Robustness suite | `stress/run/summary.md` |
-| Reference result (V branch, 2.740 m) | [`results/reference_v2.740/`](results/reference_v2.740) |
-| Slides | [presentation/project-overview.pdf](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
-| Video (≤ 5 min) | [video](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
+| Reference result (V branch, 2.740 m) | `results/reference_v2.740/` |
+| Slides | [https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
+| Video (≤ 5 min) | [https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
 
 ---
 
