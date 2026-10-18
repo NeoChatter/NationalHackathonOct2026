@@ -1,0 +1,38 @@
+# Data (excluded from repo per request)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# run outputs (smoke test, submissions, telemetry, stress runs, provenance sidecars, hash cache)
+runs/
+stress/
+
+# ML artifacts / large binaries
+*.h5
+*.mcap
+*.ckpt
+*.pt
+*.pth
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+# Archives and transfer bundles (too large for Git, contents not reviewed)
+*.tar
+*.tar.gz
+*.zip
+# Jupyter autosave copies and Office lock files (created while a document is open)
+.ipynb_checkpoints/
+~$*
+# Ground truth exported from the organisers' recording (regenerate with stage 1 / tools/gt_window.py)
+results/gt*.csv
+# server-specific config overlays (keep config.toml generic)
+server*.toml
