@@ -1,0 +1,15 @@
+{
+  "poses_evaluated": 2199,
+  "coverage_pct": 100.0,
+  "position_rmse_m": 2.7397134749512455,
+  "position_median_m": 0.9435832280073414,
+  "position_p95_m": 7.398837905243703,
+  "lateral_rmse_m": 2.0399710719425235,
+  "longitudinal_rmse_m": 1.8288105288594276,
+  "yaw_rmse_deg": 0.8724550859363036,
+  "within_0.25m_pct": 5.138699408822192,
+  "within_0.5m_pct": 15.507048658481128,
+  "within_1m_pct": 53.296953160527515,
+  "within_2m_pct": 84.22010004547522,
+  "within_5m_pct": 90.63210550250113
+}

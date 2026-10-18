@@ -1,0 +1,9 @@
+{
+  "_help": "Fill these in after you have run the final pipeline; null = placeholder is shown on the slides. Sources: tools/visualize.py metrics.txt (validation), the [TIMING] line printed by Scripts/3_causal_infer.py (ms per frame).",
+  "team_name": null,
+  "repo_url": null,
+  "val_position_rmse_m": null,
+  "val_lateral_rmse_m": null,
+  "ms_per_frame_mean": null,
+  "hardware": null
+}

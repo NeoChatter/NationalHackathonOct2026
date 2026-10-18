@@ -17,9 +17,13 @@ below.
 | tag | position RMSE [m] | median / p95 [m] | longitudinal | lateral | yaw [deg] | < 1.0 m | what changed |
 |---|---|---|---|---|---|---|---|
 | `rmse-24.508` | 24.508 | 9.003 / 56.861 | 24.302 | 3.172 | 2.159 | 12.8 % | baseline neural visual EKF |
-| `rmse-13.688` | **13.688** | 1.547 / 20.004 | 13.308 | 3.201 | 2.368 | 32.8 % | EKF trust re-tuning from the diagnostic sweep |
+| `rmse-13.688` | 13.688 | 1.547 / 20.004 | 13.308 | 3.201 | 2.368 | 32.8 % | EKF trust re-tuning from the diagnostic sweep |
+| `rmse-2.740-vidya-2026-10-18-1712` | **2.740** | 0.944 / 7.399 | 1.829 | 2.040 | 0.872 | 53.3 % | telemetry odometry, start found from images, new training recipe ([details](#milestone-telemetry-odometry--start-found-from-the-images)) |
 
-**Headline:** a 44 % cut in position RMSE (24.508 → 13.688 m) and a 6× cut in **median** error
+The last row uses a different protocol (no start pose, two held-out middle laps instead of the last 20 % of the run),
+so it is not directly comparable with the first two.
+
+**Headline (milestone 2):** a 44 % cut in position RMSE (24.508 → 13.688 m) and a 6× cut in **median** error
 (9.003 → 1.547 m) came from *re-tuning how much the filter trusts each sensor* — not from retraining
 the network or changing the architecture. The typical frame is now localized to ~1.5 m; the remaining
 RMSE is dominated by a smaller number of large along-track excursions.
@@ -159,7 +163,72 @@ trust. The win is concentrated exactly where the diagnostics said the error live
 
 ---
 
-## What's next (prioritized by the diagnostics)
+## Milestone: telemetry odometry + start found from the images
+
+Tag `rmse-2.740-vidya-2026-10-18-1712`. Position RMSE **2.740 m** on two held-out laps, without an initial pose.
+
+### Problem
+
+The organisers' final rules changed the task. No initial pose is given. The telemetry (speed, accelerations and yaw rate
+from `/constructor0/state_estimation`, pose fields excluded) may be used as input. The test lap is in daylight and faster,
+and validation must use laps of the training run only. The old pipeline started from the ground-truth pose and drifted
+with learned visual odometry, and its validation window (last 20 % of the run) was dominated by an unmapped pit stop.
+
+### Diagnosis
+
+- **Camera sync.** The old cache builder used the newest *logged* side-camera image. On 50.4 % of anchors that image was
+  stamped after the anchor, which inference can never see. Side cameras are on average 73 ms older than `camera_fl`.
+- **Odometry.** Telemetry dead reckoning against ground truth: forward scale 0.9967, per-frame error dx 0.013 m,
+  dy 0.022 m, yaw 0.009°. The learned VO on the held-out laps: dx 0.327 m per frame, 25× worse, and scale 0.94 above
+  30 m/s.
+- **Retrieval.** Good wherever the map covers the track: median 1.13 m and 96.9 % within 5 m on the held-out laps
+  (92.8 % of their frames have a reference within 5 m). With synthetic dusk-like lighting on the query: 1.27 m / 93.7 %.
+
+### Fix
+
+1. One causal camera-sync rule (newest image with stamp ≤ anchor) shared by the cache builder and inference.
+2. Telemetry odometry as the motion model. The learned VO is only a fallback and never overrules the telemetry.
+3. Start found from the images: up to 96 candidate starts tracked for up to 6 s, scored by image similarity and by
+   whether their dead-reckoned path stays on the mapped track.
+4. New training recipe: early-fusion VO network, same-place partner sampling (82.7 % of training pairs get a partner from
+   another lap), photometric augmentation, synthetic standstill pairs.
+5. Validation on two full laps from the middle of the run, with a 5 s guard on each side kept out of training and map.
+6. Filter settings from `Scripts/4_diagnostics.py --sweep`, now the defaults of `Scripts/3_causal_infer.py`. Main steps
+   of the sweep: preset 3.17 m → retrieval noise floor 2 m and `r_scale_tel` 0.3: 2.95 m → `sim_ref` 0.97: 2.80 m →
+   `topk` 4: 2.75 m → `q_tel_scale` 0.5: 2.74 m (smaller steps in `diagnostics/sweep_results.csv`). The start-finding
+   settings made no difference.
+
+### Benefit
+
+| metric | value |
+|---|---|
+| position RMSE [m] | **2.740** |
+| median / p95 [m] | 0.944 / 7.399 |
+| longitudinal / lateral RMSE [m] | 1.829 / 2.040 |
+| yaw RMSE [deg] | 0.872 |
+| within 0.25 / 0.5 / 1 / 2 / 5 m | 5.1 / 15.5 / 53.3 / 84.2 / 90.6 % |
+
+Lateral error is now larger than longitudinal: the along-track drift that drove every earlier milestone is gone.
+
+### Where the remaining error is
+
+- **Unmapped frames.** 7.2 % of the frames have no map reference within 5 m of the true pose. Their RMSE is 7.59 m against
+  1.90 m on the covered frames, so they carry about 55 % of the squared error.
+- **Start-up.** The first 60 frames (6 s, before the start is committed) have RMSE 5.24 m; after the commit, 2.64 m.
+- **Daylight is untested.** The telemetry motion model does not depend on lighting, but retrieval similarities and the
+  absolute relocalization threshold (0.95) may behave differently in daylight.
+
+### What's next
+
+1. Start finding that does not depend on the first frame's matches: seed candidates along the whole mapped track and let
+   the telemetry's yaw-rate profile select them (track-shape matching, independent of lighting).
+2. A relocalization threshold relative to the session's own similarity level, so it can still fire in daylight.
+3. Lateral refinement from the track borders, then geometric refinement against the matched reference.
+4. Combine with the teammate's parallel branch (`shubi`).
+
+---
+
+## What was next after milestone 2 (prioritized by the diagnostics at the time)
 
 1. **Along-track place retrieval.** Train the descriptor with explicit same-location-different-lap
    positives and nearby along-track hard negatives, and track retrieval recall at 2 m / 5 m. This

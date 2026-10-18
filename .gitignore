@@ -21,3 +21,12 @@ env/
 Thumbs.db
 .idea/
 .vscode/
+# Archives and transfer bundles (too large for Git, contents not reviewed)
+*.tar
+*.tar.gz
+*.zip
+# Jupyter autosave copies and Office lock files (created while a document is open)
+.ipynb_checkpoints/
+~$*
+# Ground truth exported from the organisers' recording (regenerate with tools/extract_gt.py / tools/gt_window.py)
+results/gt*.csv
