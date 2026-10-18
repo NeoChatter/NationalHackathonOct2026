@@ -9,6 +9,13 @@ Physical ideas encoded here
   4. Losing the track must never cause a jump: while lost, the search radius grows around the
      VO-predicted position, and a reset needs 5 consecutive, mutually consistent matches.
   5. The car is always on the track: its lateral offset from the nearest training path is clamped.
+
+With a TrackMap (track_map.py) ideas 3-5 use the real track frame instead of the training path:
+  3'. DB poses are known in Frenet (s, n): the search gate is also limited in arc length, and the anisotropic
+      retrieval covariance is aligned with the track tangent.
+  5'. The lateral clamp uses the real left / right borders (+ the pit / run-off corridor seen in training).
+  6.  Soft heading prior: the heading stays near the racing-line heading at s (track tangent + learned offset).
+Without a TrackMap the behaviour is unchanged.
 """
 import math
 from collections import deque
@@ -25,6 +32,13 @@ DEFAULT_CALIB = dict(
     sim_thresh=0.5,          # cosine similarity below which a match is ignored
     lat_clamp=7.0,           # m  max lateral distance from the nearest training path
     sim_floor=0.80,          # below this cosine similarity a match is ignored completely
+    # ---- track-frame options (only used when a TrackMap is passed) ----
+    border_margin=0.5,       # m   keep the reference point this far inside the borders
+    clamp_skip_m=15.0,       # m   further than this outside every corridor: lost / unmapped, do not clamp
+    heading_prior=True,      #     soft prior: heading ~ racing-line heading at s
+    heading_prior_floor_deg=2.0,     # minimum std of the prior
+    heading_prior_inflate=10.0,      # variance inflation: the prior's error is correlated over ~1 s of frames
+    heading_prior_gate_deg=30.0,     # larger deviation = the prior does not apply here (pit entry, spin)
 )
 CHI2_3DOF_99_9 = 16.27
 
@@ -34,12 +48,18 @@ def wrap(a: float) -> float:
 
 
 class Tracker:
-    def __init__(self, pose0, db_poses: np.ndarray, calib=None):
-        """pose0 = (x, y, yaw); db_poses: (N,3) [x, y, yaw] of the training frames."""
+    def __init__(self, pose0, db_poses: np.ndarray, calib=None, track=None):
+        """pose0 = (x, y, yaw); db_poses: (N,3) [x, y, yaw] of the training frames; track: optional TrackMap."""
         self.c = {**DEFAULT_CALIB, **(calib or {})}
         self.db_xy = np.asarray(db_poses[:, :2], dtype=np.float64)
         self.db_yaw = np.asarray(db_poses[:, 2], dtype=np.float64)
         self.tree = cKDTree(self.db_xy)
+        self.track = track
+        self.sn = (float('nan'), float('nan'))              # last (s, n) of the estimate (telemetry)
+        self.n_clamped = 0
+        self.n_heading_prior = 0
+        if track is not None:
+            self.db_s, self.db_n, self.db_k = track.project(self.db_xy, self.db_yaw)
         self.x = np.array([pose0[0], pose0[1], wrap(pose0[2])], dtype=np.float64)
         self.k = float(self.c.get('odom_dx_scale', 1.0))   # odometry scale, estimated ONLINE (VO under/over-reads speed)
         self.P = np.diag([0.3 ** 2, 0.3 ** 2, math.radians(1.0) ** 2, 0.15 ** 2])
@@ -114,7 +134,13 @@ class Tracker:
         if len(cand) == 0:
             return cand
         dyaw = np.abs(np.arctan2(np.sin(self.db_yaw[cand] - self.x[2]), np.cos(self.db_yaw[cand] - self.x[2])))
-        return cand[dyaw <= yaw_gate]
+        cand = cand[dyaw <= yaw_gate]
+        if self.track is not None and len(cand):
+            # same neighbourhood in arc length too: drops other parts of the track that are close in (x, y)
+            s0, _, _ = self.track.project1(self.x[0], self.x[1], self.x[2])
+            ds = np.abs(self.track.wrap_s(self.db_s[cand] - s0))
+            cand = cand[ds <= 1.25 * r + 5.0]
+        return cand
 
     # ------------------------------------------------------------------------------------------
     def update(self, cand_idx: np.ndarray, sims: np.ndarray) -> bool:
@@ -141,7 +167,9 @@ class Tracker:
                           float(np.sum(w * np.cos(self.db_yaw[cand_idx[keep]]))))
         z = np.array([zx, zy, zyaw])
 
-        cz, sz = math.cos(zyaw), math.sin(zyaw)
+        # along / across axes: the track tangent at the match if known, else the matched heading
+        ang = float(self.track.yaw[self.db_k[i0]]) if self.track is not None else zyaw
+        cz, sz = math.cos(ang), math.sin(ang)
         Rrot = np.array([[cz, -sz], [sz, cz]])
         R = np.zeros((3, 3))
         R[:2, :2] = Rrot @ np.diag([self.c['retr_along_std'] ** 2, self.c['retr_lat_std'] ** 2]) @ Rrot.T
@@ -210,7 +238,56 @@ class Tracker:
 
     # ------------------------------------------------------------------------------------------
     def end_frame(self):
-        """Corridor clamp: stay within lat_clamp metres (across) of the nearest training path."""
+        """Track constraints after predict / update: heading prior + real-border clamp, or the old path clamp."""
+        if self.track is None:
+            self._clamp_to_training_path()
+            return
+        _, n, k = self.track.project1(self.x[0], self.x[1], self.x[2])
+        if self.c.get('heading_prior', True):
+            self._heading_prior(k, n)
+        s, n, k = self.track.project1(self.x[0], self.x[1], self.x[2])
+        n_new = self._constrain_lateral(k, n)
+        if n_new != n:
+            self.x[:2] += (n_new - n) * self.track.nrm[k]
+            self.n_clamped += 1
+        self.sn = (s, n_new)
+
+    def _constrain_lateral(self, k: int, n: float) -> float:
+        """Move n into the nearest allowed interval (main track between its borders, or the pit / run-off corridor)."""
+        ivs = self.track.lateral_intervals(k, self.c['border_margin'])
+        if not ivs or any(lo <= n <= hi for lo, hi in ivs):
+            return n
+        best = min((min(max(n, lo), hi) for lo, hi in ivs), key=lambda v: abs(v - n))
+        if abs(best - n) > self.c['clamp_skip_m']:       # far outside everything: lost / unmapped, do not snap
+            return n
+        return float(best)
+
+    def _heading_prior(self, k: int, n: float):
+        """Soft EKF pseudo-measurement yaw = racing-line heading at s. Main track only; skipped when far off."""
+        if not self.track.on_main(k, n):
+            return
+        ref, std = self.track.heading_ref(k)
+        std = max(std, math.radians(self.c['heading_prior_floor_deg']))
+        R = std * std * self.c['heading_prior_inflate']
+        y = wrap(ref - self.x[2])
+        if abs(y) > math.radians(self.c['heading_prior_gate_deg']):
+            return
+        S = self.P[2, 2] + R
+        if y * y / S > 9.0:                                   # 3-sigma: disagrees with the filter, do not force it
+            return
+        K = self.P[:, 2] / S                                  # (4,)
+        dxk = K * y
+        self.x = self.x + dxk[:3]
+        self.x[2] = wrap(self.x[2])
+        self.k = float(np.clip(self.k + dxk[3], 0.6, 1.8))
+        I_KH = np.eye(4)
+        I_KH[:, 2] -= K
+        self.P = I_KH @ self.P @ I_KH.T + R * np.outer(K, K)
+        self.P = 0.5 * (self.P + self.P.T)
+        self.n_heading_prior += 1
+
+    def _clamp_to_training_path(self):
+        """Corridor clamp (no track map): stay within lat_clamp metres (across) of the nearest training path."""
         dist, j = self.tree.query(self.x[:2])
         if dist > 40.0:
             return

@@ -11,6 +11,7 @@ from scipy.spatial import cKDTree
 from torch.utils.data import DataLoader, Dataset
 
 from locnet import (IMG_H, IMG_W, OdomNet, PlaceNet, apply_aug, normalize_cams, sample_aug)
+from track_map import build_track_map, load_markers_h5
 
 
 def wrap_np(a):
@@ -191,6 +192,7 @@ def train(args):
         images = h5f['images'][:]
         poses = h5f['poses'][:]
         track_borders = h5f['track_borders'][:] if 'track_borders' in h5f else np.zeros((0, 3))
+        track_markers = load_markers_h5(h5f)          # per-marker borders (legacy cache -> one flat marker)
 
     n_total = len(timestamps_ns)
     split = n_total if args.full_train else int(0.80 * n_total)
@@ -265,10 +267,20 @@ def train(args):
     db_emb = embed_images(place, images, train_idx, device)
     db_poses = torch.from_numpy(poses[train_idx][:, [0, 1, 3]]).float()
 
+    # track frame (centerline, real borders, heading prior) from the same training frames as the database
+    track_map = None
+    try:
+        tm = build_track_map(poses[train_idx][:, [0, 1, 3]], track_markers,
+                             fallback_half_width=float(calib.get('lat_clamp', 7.0)))
+        track_map = tm.to_dict()
+        print(f'[TRACK] {tm.summary()}')
+    except Exception as e:                                     # never lose a trained model over the track map
+        print(f'[TRACK][WARN] track map not built ({e}); inference falls back to lat_clamp')
+
     os.makedirs(os.path.dirname(args.checkpoint) or '.', exist_ok=True)
     torch.save({'place_state': place.state_dict(), 'odom_state': odom.state_dict(),
                 'db_embeddings': db_emb, 'db_poses': db_poses, 'calib': calib,
-                'track_borders': torch.from_numpy(track_borders).float(),
+                'track_borders': torch.from_numpy(track_borders).float(), 'track_map': track_map,
                 'val_start_timestamp_ns': int(timestamps_ns[val_idx[0]]) if len(val_idx) else 0},
                args.checkpoint)
     print(f'[DONE] saved {args.checkpoint} ({len(db_emb)} database descriptors)')

@@ -11,6 +11,7 @@ from mcap_ros2.decoder import DecoderFactory
 
 from locnet import (CAMERA_TOPICS, IMG_H, IMG_W, OdomNet, PlaceNet, crop_and_resize,
                     normalize_cams, stamp_to_ns, yaw_from_quat)
+from track_map import TrackMap
 from tracker import Tracker
 
 MAX_SET_SPREAD_NS = 300_000_000   # 300 ms: max stamp spread inside one image set
@@ -43,8 +44,22 @@ def run(args):
     calib = dict(ck.get('calib', {}))
     if args.sim_thresh is not None:
         calib['sim_thresh'] = args.sim_thresh
+    if args.no_heading_prior:
+        calib['heading_prior'] = False
+    if args.border_margin is not None:
+        calib['border_margin'] = args.border_margin
     val_start_ns = ck.get('val_start_timestamp_ns', 0) if args.val_only else 0
     print(f'[INIT] {len(db_emb):,} database frames on {device}; calibration: {calib}')
+
+    track = None
+    if args.no_track_map:
+        print('[TRACK] disabled (--no-track-map): lat_clamp around the training path')
+    elif ck.get('track_map') is not None:
+        track = TrackMap.from_dict(ck['track_map'])
+        print(f'[TRACK] {track.summary()}')
+    else:
+        print('[TRACK] checkpoint has no track_map: lat_clamp around the training path '
+              '(add one with Scripts/build_track_map.py)')
 
     with torch.no_grad():                                          # warm-up: cuDNN autotune, allocator
         z = torch.zeros(1, 4, IMG_H, IMG_W, device=device)
@@ -73,7 +88,7 @@ def run(args):
 
     with open(args.log, 'w', newline='') as logf:
         lw = csv.writer(logf)
-        lw.writerow(['frame', 'timestamp_ns', 'mode', 'lost', 'top1_sim', 'total_ms', 'x', 'y', 'yaw'])
+        lw.writerow(['frame', 'timestamp_ns', 'mode', 'lost', 'top1_sim', 'total_ms', 'x', 'y', 'yaw', 's', 'n'])
         with open(args.mcap_path, 'rb') as f:
             reader = make_reader(f, decoder_factories=[DecoderFactory()])
             for _, ch, _, msg in reader.iter_decoded_messages(topics=list(CAMERA_TOPICS.keys())):
@@ -109,7 +124,7 @@ def run(args):
                         else:
                             j = int((emb @ db_emb.T).argmax().item())
                             pose0 = tuple(db_poses[j])
-                        tracker = Tracker(pose0, db_poses, calib)
+                        tracker = Tracker(pose0, db_poses, calib, track=track)
                     elif prev_t is not None:
                         d = odom(prev_t, cur, torch.full((1, 1), dt, device=device))[0].cpu().numpy()
                         tracker.predict(float(d[0]), float(d[2]), dt)        # dy_body ignored: cars move along their heading
@@ -132,7 +147,8 @@ def run(args):
                 x, y, yaw = tracker.pose_at(max((t_set - s_ns) * 1e-9, 0.0))
                 preds.append((t_set, x, y, yaw))
                 n = len(preds)
-                lw.writerow([n, t_set, tracker.mode, tracker.lost, f'{top1:.3f}', f'{total_ms:.2f}', f'{x:.4f}', f'{y:.4f}', f'{yaw:.4f}'])
+                lw.writerow([n, t_set, tracker.mode, tracker.lost, f'{top1:.3f}', f'{total_ms:.2f}', f'{x:.4f}', f'{y:.4f}', f'{yaw:.4f}',
+                             f'{tracker.sn[0]:.2f}', f'{tracker.sn[1]:.3f}'])
                 if n == 1 or n % 100 == 0:
                     print(f'[{n:5d}] {tracker.mode:12s} lost={tracker.lost:3d} sim={top1:.3f} | {total_ms:5.1f} ms | '
                           f'x={x:8.2f} y={y:8.2f} yaw={math.degrees(yaw):7.1f}deg | odom scale k={tracker.k:.2f}')
@@ -148,6 +164,9 @@ def run(args):
     print(f'{len(preds)} poses written to {args.output} ({n_skipped} incomplete image sets skipped)')
     print(f'End-to-end time per image set (decode + networks + filter): median {np.median(t):.1f} ms | '
           f'mean {t.mean():.1f} ms | p95 {np.percentile(t, 95):.1f} ms | device {device}')
+    if tracker is not None and track is not None:
+        print(f'Track frame: border clamp fired on {tracker.n_clamped} frames, heading prior applied on '
+              f'{tracker.n_heading_prior} frames')
     print('=' * 70)
 
 
@@ -159,4 +178,7 @@ if __name__ == '__main__':
     ap.add_argument('--log', default='inference_telemetry.csv')
     ap.add_argument('--sim-thresh', type=float, default=None, help='override the calibrated similarity threshold')
     ap.add_argument('--val-only', action='store_true', help='run only on the held-out last 20%% of the run')
+    ap.add_argument('--no-track-map', action='store_true', help='A/B: ignore the track map, use the old lat_clamp')
+    ap.add_argument('--no-heading-prior', action='store_true', help='A/B: track map borders but no heading prior')
+    ap.add_argument('--border-margin', type=float, default=None, help='override the border margin [m]')
     run(ap.parse_args())

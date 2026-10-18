@@ -8,6 +8,8 @@ import numpy as np
 from mcap.reader import make_reader
 from mcap_ros2.decoder import DecoderFactory
 
+from track_map import TRACK_BOUNDS_TOPIC, flat_points, markers_from_msg, read_track_bounds_mcap, save_markers_h5
+
 CAMERAS = ('camera_fl', 'camera_fr', 'camera_cl', 'camera_cr')
 CAMERA_TOPICS = {f'/constructor0/sensor/{c}/compressed_image': i for i, c in enumerate(CAMERAS)}
 IMG_W, IMG_H = 256, 128
@@ -43,7 +45,7 @@ def build_dataset(mcap_path: str, output_h5: str):
 
     gt_stamps = []
     gt_poses = []  # [x, y, z, yaw]
-    track_borders = []
+    track_markers = []  # one dict per border marker (left / right / pit lane ...), see track_map.py
 
     # Buffer for causal multi-camera sync anchored on camera_fl (index 0)
     latest_cam_img = [None] * len(CAMERAS)
@@ -53,7 +55,7 @@ def build_dataset(mcap_path: str, output_h5: str):
     sample_imgs = []      # (N, 4, H, W) uint8
     sample_dt_offsets = []  # (N, 4) float32 in seconds: (t_fl - t_cam)
 
-    topics_to_read = list(CAMERA_TOPICS.keys()) + ['/tf', '/constructor0/track_bounds']
+    topics_to_read = list(CAMERA_TOPICS.keys()) + ['/tf', TRACK_BOUNDS_TOPIC]
 
     with open(mcap_path, 'rb') as f:
         reader = make_reader(f, decoder_factories=[DecoderFactory()])
@@ -69,10 +71,8 @@ def build_dataset(mcap_path: str, output_h5: str):
                         gt_stamps.append(s_ns)
                         gt_poses.append([float(p.x), float(p.y), float(p.z), yaw])
 
-            elif topic == '/constructor0/track_bounds' and not track_borders:
-                for marker in getattr(msg, 'markers', []) or []:
-                    for pt in getattr(marker, 'points', []) or []:
-                        track_borders.append([float(pt.x), float(pt.y), float(pt.z)])
+            elif topic == TRACK_BOUNDS_TOPIC and not track_markers:
+                track_markers = markers_from_msg(msg)   # keep each border line separately
 
             elif topic in CAMERA_TOPICS:
                 cam_idx = CAMERA_TOPICS[topic]
@@ -126,15 +126,43 @@ def build_dataset(mcap_path: str, output_h5: str):
         h5f.create_dataset('images', data=sample_imgs, chunks=(64, 4, IMG_H, IMG_W))
         h5f.create_dataset('dt_offsets', data=sample_dt_offsets)
         h5f.create_dataset('poses', data=poses_xyzyaw)
-        if track_borders:
-            h5f.create_dataset('track_borders', data=np.asarray(track_borders, dtype=np.float64))
+        if track_markers:
+            # flat array kept for older readers; the per-marker group keeps the line structure
+            h5f.create_dataset('track_borders', data=flat_points(track_markers))
+            save_markers_h5(h5f, track_markers)
 
     print(f'[DONE] Saved {len(sample_stamps)} synchronized 4-camera samples to {output_h5} in {time.perf_counter()-t0:.1f}s.')
+    _print_markers(track_markers)
+
+
+def _print_markers(markers):
+    print(f'[BORDERS] {len(markers)} track_bounds markers')
+    for m in markers:
+        print(f'  ns={m["ns"]!r:24s} id={m["id"]:4d} type={m["type"]:2d} points={len(m["points"]):6d} frame={m["frame_id"]!r}')
+
+
+def add_borders_only(mcap_path: str, output_h5: str):
+    """Upgrade an existing cache with per-marker borders without re-decoding the images (reads one topic)."""
+    markers = read_track_bounds_mcap(mcap_path)
+    if not markers:
+        raise SystemExit(f'No {TRACK_BOUNDS_TOPIC} markers found in {mcap_path}')
+    with h5py.File(output_h5, 'a') as h5f:
+        if 'track_borders' in h5f:
+            del h5f['track_borders']
+        h5f.create_dataset('track_borders', data=flat_points(markers))
+        save_markers_h5(h5f, markers)
+    print(f'[DONE] wrote per-marker borders into {output_h5}')
+    _print_markers(markers)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('mcap_path', help='Path to c0_2026-10-13_22-53-42_camloc_0.mcap')
     parser.add_argument('--output', default='data/training_cache.h5', help='Output HDF5 cache')
+    parser.add_argument('--borders-only', action='store_true',
+                        help='only (re)write the per-marker track borders into an existing cache')
     args = parser.parse_args()
-    build_dataset(args.mcap_path, args.output)
+    if args.borders_only:
+        add_borders_only(args.mcap_path, args.output)
+    else:
+        build_dataset(args.mcap_path, args.output)

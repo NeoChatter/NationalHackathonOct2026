@@ -1,7 +1,10 @@
 # Pipeline comparison — `shubi` branch vs. `rmse-13.688` baseline
 
-Branch: `shubi`  ·  Baseline tag: `rmse-13.688`  ·  New tag: `rmse-10.426-shubi`
+Branch: `shubi`  ·  Baseline tag: `rmse-13.688`  ·  Milestones: `rmse-10.426-shubi` → `rmse-8.684-shubi` (latest)
 Evaluation: `--val-only` run on the held-out laps, scored with `Tools/evaluate.py gt_val.csv val_submission.csv`.
+
+> This doc has two milestones. Milestone 1 (below) is the odometry-calibration work. Milestone 2 (at the
+> bottom) is the track-frame work that took the val RMSE from 10.426 to 8.684 m.
 
 > Note on comparability: the `10.426` number here is a **validation-split** score (last ~20% of frames,
 > 2387 poses). The baseline `13.688` recorded in the repo tag is the sweep-tuned milestone for the same
@@ -135,3 +138,62 @@ This is the regression to investigate. A few code-grounded hypotheses, most like
 ---
 *Generated on the `shubi` branch for joint analysis. Evaluation numbers transcribed from the session's
 `3_causal_infer.py` / `evaluate.py` logs.*
+
+
+---
+
+# Milestone 2 — track-frame constraints (`rmse-8.684-shubi`)
+
+Tag: `rmse-8.684-shubi`  ·  Builds on `rmse-10.426-shubi`.
+No retraining: the track map was added to the existing `racing_model_cal.pt` with `Scripts/build_track_map.py`
+(checkpoint used: `racing_model_track.pt`). Same `--val-only` split, 2387 poses.
+
+## Headline (vs. the previous `shubi` milestone)
+
+| metric | `rmse-10.426-shubi` | `rmse-8.684-shubi` | change |
+|---|---:|---:|---:|
+| **position RMSE [m]**  | 10.426 | **8.684** | **−1.74 (−17%)** |
+| position median [m]    | 1.062  | 1.067  | ~flat |
+| position p95 [m]       | 32.427 | 28.695 | −3.73 |
+| longitudinal RMSE [m]  | 8.109  | 6.800  | −1.31 (−16%) |
+| **lateral RMSE [m]**   | 6.552  | **5.401** | **−1.15 (−18%) — regression recovered** |
+| yaw RMSE [deg]         | 1.710  | 1.410  | −0.30 |
+| within 1.00 m          | 47.7 % | 47.7 % | flat |
+
+The lateral regression flagged in milestone 1 (4.64 → 6.55 m) is now partly recovered (→ 5.40 m), while
+longitudinal kept improving. Both the along-track and across-track components moved in the right direction.
+
+## What changed
+
+The track frame replaces the blunt `lat_clamp` (distance to the nearest training path) with the real track
+geometry, built offline and stored in the checkpoint. New `Scripts/track_map.py` + `Scripts/build_track_map.py`;
+`1_build_dataset.py` now stores border markers per line; `2_train_model.py` bakes a `track_map` into the
+checkpoint; `tracker.py` / `3_causal_infer.py` use it when present (fully backward-compatible without one).
+
+- **Per-marker borders.** `track_bounds` is kept per line instead of flattened. The run found 4 markers
+  (left=1, right=1, other=2) and both walls at 100% of stations.
+- **Centerline + (s, n).** A 3006 m closed centerline (3006 stations) re-centred between the real borders,
+  median width L/R 6.8/6.8 m. DB poses are expressed in Frenet (s, n).
+- **Real-border clamp** replaces `lat_clamp` — fired on only 15 frames (the estimate was already inside the
+  borders almost everywhere).
+- **Heading prior** (soft pull toward the racing-line heading at s) — applied on 2374/2387 frames; measured
+  heading spread median 0.9°, so the prior is tight and trustworthy. This is the main driver of the yaw and
+  lateral improvement.
+- **Pit / run-off corridor** — 760 stations carry an extra allowed lateral band from where training laps
+  left the main track.
+
+## Reading the run
+
+- The whole lap stays `TRACKING` (`lost=0`) until the pit-lane pass near the end, where it enters
+  `RELOCALIZING` (frames ~2100–2300, sim 0.81–0.93) — same structural weak spot as before, now the dominant
+  remaining error (p95 still 28.7 m). That region is the next thing to attack.
+- Runtime unchanged in practice: median 14.0 ms / p95 19.3 ms per image set (track-frame ops are numpy-cheap).
+
+## Still open
+
+- **Pit-lane relocalization tail** is now the largest remaining error source. Worth checking whether the
+  pit corridor (760 stations) is being used during that stretch, or whether retrieval simply has no nearby
+  database coverage there.
+- Settings (`border_margin`, heading-prior strength/gate) are first guesses; a small sweep via the A/B flags
+  (`--no-heading-prior`, `--border-margin`) could squeeze more.
+- Same split caveat as milestone 1: scores are on the `--val-only` held-out laps.
