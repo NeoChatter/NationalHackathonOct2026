@@ -7,23 +7,7 @@ Quick links: [Submission items](#1-submission-items) · [Setup & downloads](#2-s
 
 ---
 
-## 1. Submission items
-
-| Item | Location |
-|---|---|
-| Source code | `Scripts/` (stages 1-6 + `lib/`), `tools/` (scoring, visualisation), `run_submission.py` |
-| Pose files | `results/poses/val_block_poses.csv` (held-out laps), `results/poses/test_poses.csv` |
-| Validation results | `results/validation/official_score.txt`, `metrics.txt`, `results/poses/val_block_poses.csv.eval.json` |
-| Trajectory visualisation | `results/validation/`: `trajectory.png`, `error_timeline.png`, `error_distribution.png` |
-| Training progress | `results/figures/training_progress.png` |
-| Robustness suite | `stress/run/summary.md` |
-| Reference result (V branch, 2.740 m) | `results/reference_v2.740/` |
-| Slides | [https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
-| Video (≤ 5 min) | [https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf](https://rwth-aachen.sciebo.de/s/xq2Lm9CSLWfikyf) |
-
----
-
-## 2. Setup & downloads
+## 1. Setup & downloads
 
 **Requirements:**
 - Python 3.11 or newer
@@ -43,9 +27,9 @@ Quick links: [Submission items](#1-submission-items) · [Setup & downloads](#2-s
 
 ---
 
-## 3. Run inference
+## 2. Run inference
 
-**3a. Test recording**
+**2a. Test recording**
 
 ```bash
 python Scripts/4_infer.py <TEST_BAG.mcap> --checkpoint checkpoints/racing_model_cal.pt \
@@ -55,7 +39,7 @@ python tools/evaluate.py <TEST_GT.csv> results/poses/test_poses.csv
 
 Output: one pose per camera frame, CSV with `timestamp_ns,x,y,yaw`
 
-**3b. Held-out validation laps (with ground truth)**
+**2b. Held-out validation laps (with ground truth)**
 
 ```bash
 python Scripts/1_build_dataset.py
@@ -69,7 +53,7 @@ Expected output: `coverage 100.0 %`, then the scores.
 
 ---
 
-## 4. Full reproduction
+## 3. Full reproduction
 
 ```bash
 python run_submission.py validate                       # stages 1-5, 2-lap validation protocol
@@ -87,7 +71,7 @@ python run_submission.py submit --test-bag <TEST.mcap>  # stages 2-4, all frames
 
 ---
 
-## 5. How the method works
+## 4. How the method works
 
 - **Reference map.** Every training frame is stored as a 256-D image descriptor with its known pose.
 - **Network (RacingLocNet).** ResNet-18 encodes 4 front/side cameras into a descriptor; a second network predicts motion (fallback odometry).
@@ -98,7 +82,7 @@ python run_submission.py submit --test-bag <TEST.mcap>  # stages 2-4, all frames
 
 ---
 
-## 6. Results
+## 5. Results
 
 Held-out laps of the training run (frames 4777–6975, 220 s), validation model, no initial pose:
 
@@ -109,7 +93,7 @@ Held-out laps of the training run (frames 4777–6975, 220 s), validation model,
 
 ---
 
-## 7. Rules compliance
+## 6. Rules compliance
 
 - **Causal:** poses use only images with `header.stamp <= t` and telemetry already arrived.
 - **No initial pose:** start position found from images; motion from speed and yaw rate.
