@@ -31,7 +31,7 @@ signals, at camera rate (10 Hz), with no initial pose. Built for the Constructor
     <td width="50%" valign="top" align="center">
       <h2>Shubhangee Singhal</h2>
       <sub>M.Sc. Automotive Engineering, RWTH Aachen</sub>
-      <p>Combines vehicle dynamics and model-based engineering with data-driven methods.<br>
+      <p>Physics-grounded, data-driven engineering for vehicle systems.<br>
       Experience in powertrain calibration (Maruti Suzuki) and MBSE research (RWTH IMSE).</p>
       <p><i>Open to internships and master thesis roles.</i></p>
       <p><a href="https://linkedin.com/in/shubhangee-singhal">LinkedIn</a></p>
