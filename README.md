@@ -80,15 +80,33 @@ A causal Extended Kalman Filter on SE(2) `[x, y, yaw]` that fuses the two heads 
 The EKF is initialized from the first GT pose of the run (allowed), falling back to global neural
 relocalization if `/tf` is absent. Writes `submission.csv` plus a per-frame `inference_telemetry.csv`.
 
+The filter's trust is tunable from the command line. The current defaults — a longitudinal
+process-noise floor `q_x_floor = 1.0` m/step and a position measurement-covariance scale
+`r_scale = 0.03` — were selected by the diagnostic sweep and are what took the score from 24.508 m to
+13.688 m (see `brainstorming_and_diagnostics.md`).
+
+### Diagnostics — `Scripts/4_diagnostics.py`
+
+An offline analysis tool that **uses ground truth on purpose**, so it is never part of the submission
+path. On the held-out validation frames it compares four variants on identical timestamps
+(`retrieval_top1`, `aux_head`, `vo_only`, `fused`), decomposes every error into longitudinal/lateral,
+and reports reference-map coverage, gate-exclusion rate, VO step statistics, filter consistency
+(NIS/NEES), plus a parameter sweep over `q_x_floor`, `r_scale`, and gate size ranked by validation RMSE.
+This is how the fusion weaknesses were isolated instead of guessing. Requires a checkpoint trained
+*without* `--full-train` (so a validation split exists).
+
 ## Repository layout
 
 | path | |
 |---|---|
 | `Scripts/1_build_dataset.py` | MCAP → synchronized HDF5 training cache |
 | `Scripts/2_train_model.py` | `RacingLocNet` training + neural place DB → checkpoint |
-| `Scripts/3_causal_infer.py` | causal neural EKF inference → `submission.csv` |
+| `Scripts/3_causal_infer.py` | causal neural EKF inference (sweep-tuned trust) → `submission.csv` |
+| `Scripts/4_diagnostics.py` | offline GT-assisted diagnostics + parameter sweep (not in submission path) |
 | `tools/extract_gt.py` | extract ground-truth poses from `/tf` to CSV |
 | `tools/evaluate.py` | score a submission against ground truth |
+| `brainstorming_and_diagnostics.md` | milestone-by-milestone problem → diagnosis → fix → benefit log |
+| `chats/` | debugging walkthroughs that drove each improvement |
 | `checkpoints/` | trained checkpoint lives here (produced on the server — see note) |
 | `data/` | dataset + HDF5 cache (not tracked in this repo) |
 
@@ -107,12 +125,15 @@ python Scripts/1_build_dataset.py data/c0_2026-10-13_22-53-42_camloc_0.mcap --ou
 # 2. Train (on a GPU server); produces the checkpoint
 python Scripts/2_train_model.py --data-h5 data/training_cache.h5 --checkpoint checkpoints/racing_model.pt
 
-# 3. Causal inference -> submission.csv
+# 3. Causal inference -> submission.csv (sweep-tuned trust is the default)
 python Scripts/3_causal_infer.py data/c0_2026-10-13_22-53-42_camloc_0.mcap \
     --checkpoint checkpoints/racing_model.pt --output submission.csv
 
 # Validation-only run on the held-out laps
 python Scripts/3_causal_infer.py data/...mcap --checkpoint checkpoints/racing_model.pt --val-only
+
+# Offline diagnostics + parameter sweep (checkpoint must be trained WITHOUT --full-train)
+python Scripts/4_diagnostics.py --data-h5 data/training_cache.h5 --checkpoint checkpoints/racing_model.pt
 
 # Score
 python tools/extract_gt.py data/c0_2026-10-13_22-53-42_camloc_0.mcap gt.csv
@@ -129,5 +150,7 @@ full dataset, topic, and metric reference.
 ## Versioning & milestones
 
 Scored milestones are recorded as annotated git tags, with the full metric block in the tag message.
-The current baseline is tagged at **position RMSE 24.508 m**. Each later tag should show a lower score;
-compare against this one to track progress.
+The baseline is `rmse-24.508`; the current best is **`rmse-13.688`** (position RMSE 13.688 m). Each
+later tag should show a lower score; compare against these to track progress. The full
+problem → diagnosis → fix → benefit story behind each milestone lives in
+`brainstorming_and_diagnostics.md`, with the source debugging walkthroughs under `chats/`.
