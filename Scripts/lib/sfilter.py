@@ -12,6 +12,8 @@ This filter runs ALL the time next to the EKF:
             so a global drop of all similarities (daylight vs. a night database) does not change it.
   anchor  : while the EKF is tracking, its s is fed in as a soft measurement, so the belief starts from the last
             good position the moment the EKF gets lost.
+  init    : with no start pose the belief starts UNIFORM over the lap; the same ready() test then finds the start
+            position (global localisation), so no ground truth is needed at runtime.
 
 Re-seed signal (ready()): a clear peak (probability mass in a +-10 m window), that is DISTINCTIVE (z of the best
 bin minus z of the best bin > 50 m away along the track) and that has moved consistently with the odometry for
@@ -88,15 +90,18 @@ class AlongTrackFilter:
         self._estimate()
 
     # ------------------------------------------------------------------------------------------
-    def predict(self, dist: float):
+    def predict(self, dist: float, frac: float = None):
+        """Shift by the odometry distance; blur by base + frac * dist (frac: the odometry source's relative error,
+        default sf_frac_sigma for visual odometry; the speed signal is much tighter)."""
         if not np.isfinite(dist) or dist <= 0.0:
             return
+        frac = self.c['sf_frac_sigma'] if frac is None else frac
         self._step += dist
         shift = dist / self.ds
         i = int(math.floor(shift))
         f = shift - i
         p = (1.0 - f) * np.roll(self.p, i) + f * np.roll(self.p, i + 1)
-        sig = math.hypot(self.c['sf_base_sigma'], self.c['sf_frac_sigma'] * dist) / self.ds
+        sig = math.hypot(self.c['sf_base_sigma'], frac * dist) / self.ds
         p = _blur_circ(p, sig)
         eps = self.c['sf_eps']
         p = (1.0 - eps) * p + eps / self.K

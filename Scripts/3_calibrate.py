@@ -1,30 +1,74 @@
 """
-STAGE 3 - post-training calibration of a checkpoint (no retraining). Two independent steps, both on by default:
+STAGE 3 - post-training calibration of a checkpoint (no retraining). Three independent steps, all on by default:
 
-  a) odometry bias curve : speed-dependent forward-distance bias of OdomNet, measured on the HELD-OUT laps and
-                           stored as calib['dx_map_pred'] -> calib['dx_map_true'] (+ the residual std).
-  b) track map           : centerline, real borders, pit corridor, heading prior from the database poses and the
-                           per-marker track borders (from the cache, or straight from the bag with --mcap).
+  a) visual odometry bias : speed-dependent forward-distance bias of OdomNet, measured on the HELD-OUT laps and
+                            stored as calib['dx_map_pred'] -> calib['dx_map_true'] (+ the residual std).
+  b) state estimation     : speed scale, yaw-rate scale + bias and per-frame noise of the vehicle's speed / yaw-rate
+                            signals (the only state-estimation fields used, see lib/state_est.py). Fitted on the
+                            TRAINING split, reported on the held-out laps. Stored as calib['se'].
+  c) track map            : centerline, real borders, pit corridor, heading prior from the database poses and the
+                            per-marker track borders (from the cache, or straight from the bag with --mcap).
 
-  python Scripts/3_calibrate.py --checkpoint checkpoints/robust.pt --output checkpoints/robust_cal.pt \
-         --data-h5 data/training_cache.h5 --plot checkpoints/robust_track.png
-  python Scripts/3_calibrate.py ... --skip-odom --mcap Data/<bag>.mcap      # only the track map, borders from bag
+  python Scripts/3_calibrate.py --checkpoint checkpoints/racing_model_cal.pt --output checkpoints/se_cal.pt \
+         --data-h5 data/training_cache.h5 --plot checkpoints/track.png
+  python Scripts/3_calibrate.py ... --skip-odom --skip-se --mcap Data/<bag>.mcap     # only the track map
 
-(a) needs a checkpoint trained WITHOUT --full-train (validation split). For a --full-train model, train with
---calib-ckpt <this output> and run this script with --skip-odom to (re)build the track map.
+The cache must contain state_est/ (1_build_dataset.py, or --aux-only on an existing cache).
 """
 import argparse
 import math
 import os
+import sys
 
 import h5py
 import numpy as np
 import torch
 
-from lib import provenance
-from lib.data import OdomDataset, odom_bias_curve, predict_odom
-from lib.models import load_networks
-from lib.track_map import build_track_map, load_markers_h5, marker_xy, read_track_bounds_mcap
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # make `lib` importable from any CWD
+
+from lib import provenance  # noqa: E402
+from lib.data import OdomDataset, odom_bias_curve, predict_odom  # noqa: E402
+from lib.models import load_networks  # noqa: E402
+from lib.state_est import DEFAULT_SE_CALIB, SE_FIELDS, evaluate_calibration, fit_calibration, pair_measurements  # noqa: E402
+from lib.track_map import build_track_map, load_markers_h5, marker_xy, read_track_bounds_mcap  # noqa: E402
+
+
+def calibrate_state_est(ck, args):
+    with h5py.File(args.data_h5, 'r') as f:
+        if 'state_est' not in f:
+            print('[SE][WARN] cache has no state_est/: run 1_build_dataset.py <bag> --aux-only. Skipped.')
+            return
+        ts, poses = f['timestamps_ns'][:], f['poses'][:]
+        se = {'t_ns': f['state_est/t_ns'][:]}
+        for k in SE_FIELDS:
+            se[k] = f[f'state_est/{k}'][:]
+    ok = np.isfinite(se['v_mps']) & np.isfinite(se['wz_radps'])
+    se = {k: v[ok] for k, v in se.items()}
+    o = np.argsort(se['t_ns'])
+    se = {k: v[o] for k, v in se.items()}
+    vs = int(ck.get('val_start_timestamp_ns', 0))
+    train_idx = np.flatnonzero(ts < vs) if vs > 0 else np.arange(len(ts))
+    val_idx = np.flatnonzero(ts >= vs) if vs > 0 else np.zeros(0, dtype=int)
+
+    m_tr = pair_measurements(se, ts, poses, train_idx)
+    if len(m_tr) < 200:
+        print(f'[SE][WARN] only {len(m_tr)} usable frame pairs: skipped')
+        return
+    cal = fit_calibration(m_tr)
+    print(f'[SE] fitted on {cal["n_pairs"]} training frame pairs ({cal["n_moving"]} moving): '
+          f'v_scale {cal["v_scale"]:.4f}, wz_scale {cal["wz_scale"]:.4f}, wz_bias {math.degrees(cal["wz_bias"]):+.3f} deg/s, '
+          f'noise dx {cal["dx_std"]:.3f} m / dyaw {math.degrees(cal["dyaw_std"]):.3f} deg per frame')
+    for name, idx in (('train', train_idx), ('held-out', val_idx)):
+        if len(idx) < 50:
+            continue
+        r = evaluate_calibration(pair_measurements(se, ts, poses, idx), cal)
+        print(f'[SE] {name:8s}: forward step median |err| {r["dx_median_abs"]:.3f} m, bias {r["dx_rel_bias_pct"]:+.2f}%, '
+              f'distance drift {r["dist_drift_pct"]:+.2f}%, dyaw median |err| {r["dyaw_median_abs_deg"]:.3f} deg')
+    if abs(cal['wz_scale']) < 0.5 or abs(cal['wz_scale']) > 2.0 or not 0.8 < cal['v_scale'] < 1.25:
+        print('[SE][WARN] calibration looks implausible (sign / unit mismatch?) - check the fields before using it')
+    calib = dict(ck.get('calib', {}) or {})
+    calib['se'] = {**DEFAULT_SE_CALIB, **{k: cal[k] for k in ('v_scale', 'wz_scale', 'wz_bias', 'dx_std', 'dyaw_std')}}
+    ck['calib'] = calib
 
 
 def calibrate_odometry(ck, args, device):
@@ -60,7 +104,7 @@ def build_map(ck, args):
     if not markers:
         print('[TRACK][WARN] no track borders found: corridor falls back to +-lat_clamp around the reference lap')
     elif len(markers) == 1 and markers[0]['ns'] == 'legacy_flat':
-        print('[TRACK][WARN] cache only has the flat border array; run 1_build_dataset.py --borders-only or use --mcap')
+        print('[TRACK][WARN] cache only has the flat border array; run 1_build_dataset.py --aux-only or use --mcap')
     calib = ck.get('calib', {}) or {}
     tm = build_track_map(db, markers, ds=args.ds, fallback_half_width=float(calib.get('lat_clamp', 7.0)))
     i = tm.info
@@ -110,6 +154,8 @@ def main(args, record):
     ck = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     if not args.skip_odom:
         calibrate_odometry(ck, args, device)
+    if not args.skip_se:
+        calibrate_state_est(ck, args)
     if not args.skip_track:
         build_map(ck, args)
     provenance.append(ck, record)
@@ -124,7 +170,8 @@ if __name__ == '__main__':
     ap.add_argument('--output', default='checkpoints/racing_model_cal.pt')
     ap.add_argument('--data-h5', default='data/training_cache.h5')
     ap.add_argument('--mcap', default='', help='read the track borders from the bag instead of the cache')
-    ap.add_argument('--skip-odom', action='store_true', help='do not (re)measure the odometry bias curve')
+    ap.add_argument('--skip-odom', action='store_true', help='do not (re)measure the visual odometry bias curve')
+    ap.add_argument('--skip-se', action='store_true', help='do not (re)calibrate the state-estimation odometry')
     ap.add_argument('--skip-track', action='store_true', help='do not (re)build the track map')
     ap.add_argument('--ds', type=float, default=1.0, help='centerline station spacing [m]')
     ap.add_argument('--plot', default='', help='optional PNG of centerline / borders / pit corridor (matplotlib)')

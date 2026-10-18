@@ -1,13 +1,16 @@
 # Camera-Only Race Car Localization — Neural Visual EKF
 
 Estimate the pose of a race car (`constructor0/base_link`) in the track frame `map` — position
-`x`, `y` and heading `yaw` — using **only the onboard cameras**, at camera rate (10 Hz). The dataset
+`x`, `y` and heading `yaw` — from the **onboard cameras plus the vehicle's speed / yaw-rate / acceleration
+signals**, at camera rate (10 Hz). The dataset
 is a night session at Yas Marina North (constructor0, 2026-10-13), laps up to ~40 m/s including a
 pit-lane pass.
 
-The pipeline is causal: a pose at time `t` only uses images with stamps `<= t`. The single ground-truth
-pose at the start of the run is allowed as the initial pose; all other GT is used for training/scoring
-only, never as a runtime input.
+The pipeline is causal: a pose at time `t` only uses messages with stamps `<= t`. **No start pose is given**:
+the method finds the start position itself (global initialisation, `Scripts/lib/sfilter.py`). Ground truth is
+used for training, calibration and scoring only, never as a runtime input; `/tf` is not read at inference.
+Besides the cameras, the vehicle's **speed, yaw rate and accelerations** from `/constructor0/state_estimation`
+are used as inputs (allowed); its pose fields are never read (see *Data use* below).
 
 ## Current milestone
 
@@ -124,38 +127,51 @@ This is how the fusion weaknesses were isolated instead of guessing. Requires a 
 
 ```bash
 pip install -r requirements.txt
-BAG=Data/c0_2026-10-13_22-53-42_camloc_0.mcap
+export BAG=Data/c0_2026-10-13_22-53-42_camloc_0.mcap
 
-# 1. bag -> cache (+ full GT CSV)
-python Scripts/1_build_dataset.py $BAG --output data/training_cache.h5 --export-gt data/gt.csv
-# 2. train a condition-robust model (GPU)
-python Scripts/2_train.py --data-h5 data/training_cache.h5 --checkpoint checkpoints/robust.pt \
-    --clahe --norm robust --aug structured --seed 0
-# 3. odometry bias curve + track map
-python Scripts/3_calibrate.py --checkpoint checkpoints/robust.pt --output checkpoints/robust_cal.pt \
-    --data-h5 data/training_cache.h5 --plot checkpoints/robust_track.png
-# 4. causal inference on the held-out laps (or without --val-only for a submission)
-python Scripts/4_infer.py $BAG --checkpoint checkpoints/robust_cal.pt --val-only --output runs/val.csv
+# 1. bag -> cache (images, GT targets, track borders, state estimation) + full GT CSV for scoring
+python Scripts/1_build_dataset.py "$BAG" --output data/training_cache.h5 --export-gt data/gt.csv
+# 2. train PlaceNet + OdomNet (GPU)
+python Scripts/2_train.py --data-h5 data/training_cache.h5 --checkpoint checkpoints/model.pt --seed 0
+# 3. visual-odometry bias + state-estimation calibration + track map
+python Scripts/3_calibrate.py --checkpoint checkpoints/model.pt --output checkpoints/model_cal.pt \
+    --data-h5 data/training_cache.h5 --plot checkpoints/track.png
+# 4. causal inference, no start pose (on the held-out laps; drop --val-only for a submission)
+python Scripts/4_infer.py "$BAG" --checkpoint checkpoints/model_cal.pt --val-only --output runs/val.csv
 # 5. score + where the error comes from
-python Scripts/5_evaluate.py --gt data/gt.csv --sub runs/val.csv --checkpoint checkpoints/robust_cal.pt --val-only
-# 6. robustness suite
-python Scripts/6_stress_test.py --mcap $BAG --checkpoint checkpoints/robust_cal.pt --gt data/gt.csv --out stress/robust
+python Scripts/5_evaluate.py --gt data/gt.csv --sub runs/val.csv --checkpoint checkpoints/model_cal.pt --val-only
+# 6. robustness suite (one scenario per family)
+python Scripts/6_stress_test.py --mcap "$BAG" --checkpoint checkpoints/model_cal.pt --gt data/gt.csv --quick \
+    --out stress/run
 ```
 
 Every output gets a `<file>.meta.json` sidecar (git commit, arguments, input fingerprints, and the
 checkpoint's provenance chain `build → train → calibrate`).
 
-### Fairness / data use
+### Data use
 
-- The only training input is the provided night session bag. The place database is built solely from its
-  training-split frames. No evaluation data is read, and no parameter is tuned against it.
-- Condition robustness is a stated design goal, handled generically: broad, symmetric augmentation over
-  weather / time-of-day / illumination (brightening and darkening equally likely), robust normalisation,
-  CLAHE, and causal self-adaptation during a run (experience memory and optional AdaBN) that use only the
-  run's own past frames and the tracker's own estimate — the same information the filter already uses.
-- The stress suite perturbs inputs to measure robustness; it is a proxy and never part of the submission
-  path, and its scenarios are generic conditions, not a reconstruction of any specific run.
-- The only runtime use of ground truth is the single allowed initial pose.
+- **Training data:** only the provided training bag. Validation laps are the last 20 % of that same run
+  (`--val-only`); the shared test-domain sample is not used to train, pre-train, tune or validate anything.
+- **Runtime inputs:** the four camera topics, and from `/constructor0/state_estimation` only `v_mps` (speed),
+  `wz_radps` (yaw rate), `ax_mps2`, `ay_mps2` (accelerations). The whitelist lives in one place,
+  `Scripts/lib/state_est.py` (`SE_FIELDS`); pose and pose-derived fields (`x_m`, `y_m`, `z_m`, `roll_rad`,
+  `pitch_rad`, `yaw_rad`, `pos_accuracy`, `yaw_vel_rad`, `sn_map_state`) are never read.
+- **No start pose:** inference starts in `INITIALIZING` mode with a uniform belief over the lap and seeds the
+  filter once place recognition is confident, distinctive and consistent with the odometry. `/tf` is not read
+  (`--init first-pose` exists only as a diagnostic on the training bag and must not be used for submissions).
+- **Ground truth** (`/tf`) is read only by `1_build_dataset.py` (training targets) and for scoring.
+- **Condition robustness** is a generic design goal: broad, symmetric augmentation over weather / time-of-day /
+  illumination, robust normalisation, CLAHE, and optional causal self-adaptation during a run (experience
+  memory, AdaBN; off by default) that uses only the run's own past frames and the tracker's own estimate.
+- The stress suite perturbs inputs to measure robustness; it is a proxy, never part of the submission path.
+
+### Pre-trained models and external data
+
+| item | source | used for |
+|---|---|---|
+| ResNet-18, ImageNet-1k weights (`torchvision.models.ResNet18_Weights.DEFAULT`) | torchvision / PyTorch | initialisation of the PlaceNet and OdomNet encoders (fine-tuned on the training bag) |
+
+No external datasets are used.
 
 ## Metric
 

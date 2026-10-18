@@ -24,7 +24,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from lib import provenance
+import sys  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # make `lib` importable from any CWD
+
+from lib import provenance  # noqa: E402
 from lib.common import IMG_H, IMG_W
 from lib.data import OdomDataset, PlaceDataset, embed_images, eval_odom, eval_retrieval
 from lib.models import OdomNet, PlaceNet, preproc_cfg

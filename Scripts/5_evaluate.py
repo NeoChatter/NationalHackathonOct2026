@@ -23,8 +23,11 @@ import numpy as np
 import pandas as pd
 import torch
 
-from lib import provenance
-from lib.metrics import align, db_coverage, format_score, load_gt, score, slices
+import sys  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # make `lib` importable from any CWD
+
+from lib import provenance  # noqa: E402
+from lib.metrics import align, db_coverage, format_score, load_gt, score, slices  # noqa: E402
 from lib.track_map import TrackMap
 
 UNMAPPED_M = 10.0

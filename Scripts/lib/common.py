@@ -62,7 +62,8 @@ def iter_gt_poses(mcap_path: str, min_ns: int = 0):
 
 
 def read_first_pose(mcap_path: str, min_ns: int = 0):
-    """The ONLY ground truth inference may use: the first pose of the run. None if there is no /tf."""
+    """DIAGNOSTIC ONLY (4_infer.py --init first-pose on the training bag): the first GT pose of the run.
+    No start pose is given on the test run, so submissions must use global initialisation. None if no /tf."""
     for _, x, y, _, yaw in iter_gt_poses(mcap_path, min_ns):
         return x, y, yaw
     return None

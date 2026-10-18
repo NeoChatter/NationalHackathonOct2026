@@ -26,13 +26,16 @@ import numpy as np
 import pandas as pd
 import torch
 
-from lib import provenance
-from lib.metrics import align, load_gt, recovery, score
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # make `lib` importable from any CWD
 
-# name -> (group, perturb spec, kidnap spec)
-# name -> (group, perturb spec, kidnap spec). A balanced matrix: no condition is weighted over any other.
+from lib import provenance  # noqa: E402
+from lib.metrics import align, load_gt, recovery, score  # noqa: E402
+
+# name -> (group, perturb spec, kidnap spec[, extra 4_infer args]). A balanced matrix: no condition is weighted
+# over any other. Every run starts WITHOUT a start pose (global initialisation), as on the test run.
 SCENARIOS = {
     'clean': ('base', '', ''),
+    'clean_vo': ('base', '', '', '--odom vo'),                # camera-only odometry: what state estimation buys
     # weather / time of day (both brighter and darker; diffuse and harsh)
     'overcast2': ('weather', 'overcast:2', ''),
     'overcast3': ('weather', 'overcast:3', ''),
@@ -63,6 +66,9 @@ SCENARIOS = {
     'kidnap': ('kidnap', '', '300:80'),
     'kidnap_far': ('kidnap', '', '400:250'),
 }
+# ~1/3 of the time: one scenario per family
+QUICK = ['clean', 'clean_vo', 'overcast2', 'low_sun2', 'rain2', 'daylight2', 'contrast2', 'noise2', 'cam_drop1',
+         'kidnap']
 RECOVER_MAX_S = 30.0
 
 
@@ -70,8 +76,10 @@ def evaluate(gt, sub, tel) -> dict:
     al = align(gt, sub)
     s = score(al)
     mode = tel['mode'].values[np.minimum(al['rows'], len(tel) - 1)]
+    init = tel['mode'].values == 'INITIALIZING'
     out = dict(rmse=s['rmse'], lat=s['lat'], lon=s['lon'], yaw_deg=s['yaw_deg'], p95=s['p95'],
                coverage=s['coverage'], lost_pct=float(100.0 * np.mean(mode == 'RELOCALIZING')),
+               init_s=float(init.sum() / 10.0) if not init.all() else float('inf'),
                reseeds=int(tel['reseed'].sum()) if 'reseed' in tel else 0,
                mem_size=int(tel['mem_size'].max()) if 'mem_size' in tel else 0,
                top1_global_med=float(np.nanmedian(tel['top1_global'])) if 'top1_global' in tel else float('nan'))
@@ -90,7 +98,9 @@ def main(args, record):
     if args.only:
         names = [s.strip() for s in args.only.split(',') if s.strip()]
     elif args.group:
-        names = [n for n, (g, _, _) in SCENARIOS.items() if g in args.group.split(',') or n == 'clean']
+        names = [n for n, spec in SCENARIOS.items() if spec[0] in args.group.split(',') or n == 'clean']
+    elif args.quick:
+        names = list(QUICK)
     else:
         names = list(SCENARIOS)
     unknown = [n for n in names if n not in SCENARIOS]
@@ -103,7 +113,8 @@ def main(args, record):
 
     rows = []
     for name in names:
-        group, pert, kid = SCENARIOS[name]
+        group, pert, kid = SCENARIOS[name][:3]
+        scen_extra = SCENARIOS[name][3] if len(SCENARIOS[name]) > 3 else ''
         sub_csv = os.path.join(args.out, f'{name}.csv')
         tel_csv = os.path.join(args.out, f'{name}_telemetry.csv')
         if not (args.skip_existing and os.path.exists(sub_csv) and os.path.exists(tel_csv)):
@@ -113,7 +124,7 @@ def main(args, record):
                 cmd += ['--perturb', pert]
             if kid:
                 cmd += ['--kidnap', kid]
-            cmd += shlex.split(args.extra)
+            cmd += shlex.split(scen_extra) + shlex.split(args.extra)
             print(f'\n[RUN] {name}: {" ".join(cmd)}', flush=True)
             with open(os.path.join(args.out, f'{name}.log'), 'w') as lf:
                 rc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT).returncode
@@ -123,7 +134,8 @@ def main(args, record):
                 continue
         r = evaluate(gt, pd.read_csv(sub_csv), pd.read_csv(tel_csv))
         rows.append(dict(scenario=name, group=group, perturb=pert, kidnap=kid, **r))
-        print(f'[OK] {name:14s} RMSE {r["rmse"]:7.2f}  lat {r["lat"]:6.2f}  lon {r["lon"]:6.2f}  lost {r["lost_pct"]:5.1f}%  '
+        print(f'[OK] {name:14s} RMSE {r["rmse"]:7.2f}  lat {r["lat"]:6.2f}  lon {r["lon"]:6.2f}  init {r["init_s"]:5.1f}s  '
+              f'lost {r["lost_pct"]:5.1f}%  '
               f'reseeds {r["reseeds"]:3d}  mem {r["mem_size"]:5d}  top1 {r["top1_global_med"]:.3f}'
               + (f'  recover {r["recover_med_s"]:.1f}s ({r["recovered_pct"]:.0f}%)' if 'kidnaps' in r else ''), flush=True)
 
@@ -133,7 +145,7 @@ def main(args, record):
         df['rmse_x_clean'] = df['rmse'] / base['rmse']
         df['top1_shift'] = df['top1_global_med'] - base['top1_global_med']
     df.to_csv(os.path.join(args.out, 'summary.csv'), index=False)
-    cols = [c for c in ['scenario', 'group', 'rmse', 'rmse_x_clean', 'lat', 'lon', 'yaw_deg', 'p95', 'lost_pct',
+    cols = [c for c in ['scenario', 'group', 'rmse', 'rmse_x_clean', 'lat', 'lon', 'yaw_deg', 'p95', 'init_s', 'lost_pct',
                         'reseeds', 'mem_size', 'top1_global_med', 'top1_shift', 'recover_med_s', 'recovered_pct',
                         'error'] if c in df]
     with open(os.path.join(args.out, 'summary.md'), 'w') as f:
@@ -158,6 +170,7 @@ if __name__ == '__main__':
     ap.add_argument('--out', default='stress/run')
     ap.add_argument('--only', default='', help='comma-separated scenario names')
     ap.add_argument('--group', default='', help='comma-separated groups: base,weather,light,quality,sensor,kidnap')
+    ap.add_argument('--quick', action='store_true', help=f'one scenario per family: {",".join(QUICK)}')
     ap.add_argument('--extra', default='', help='extra args for 4_infer.py, e.g. "--reloc legacy --no-memory"')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--skip-existing', action='store_true', help='re-score existing outputs instead of re-running')
