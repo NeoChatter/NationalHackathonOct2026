@@ -9,6 +9,10 @@ __pycache__/
 venv/
 env/
 
+# run outputs (submissions, telemetry, stress runs, provenance sidecars)
+runs/
+stress/
+
 # ML artifacts / large binaries
 *.h5
 *.mcap

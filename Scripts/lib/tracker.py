@@ -16,12 +16,25 @@ With a TrackMap (track_map.py) ideas 3-5 use the real track frame instead of the
   5'. The lateral clamp uses the real left / right borders (+ the pit / run-off corridor seen in training).
   6.  Soft heading prior: the heading stays near the racing-line heading at s (track tangent + learned offset).
 Without a TrackMap the behaviour is unchanged.
+
+Condition independence (reloc='sfilter', needs a TrackMap):
+  7.  An along-track grid filter (sfilter.py) runs next to the EKF on whole-database similarities, normalised per
+      frame (relative, not absolute). When the EKF is lost it is re-seeded from that filter's confident,
+      distinctive, odometry-consistent peak instead of "5 matches above an absolute similarity".
+  8.  Similarity thresholds adapt to the level seen while tracking (a darker / brighter day shifts all
+      similarities; the night-calibrated absolute threshold would otherwise reject every match).
+  9.  Lost mode is conservative: the odometry scale relaxes to its calibrated value, the lateral position is
+      pulled toward the racing line, and the heading prior is trusted more.
+  10. The database can grow while driving (memory.py): db_put() stores today's descriptors at confident poses.
 """
 import math
 from collections import deque
 
 import numpy as np
 from scipy.spatial import cKDTree
+
+from .sfilter import DEFAULT_SF, AlongTrackFilter
+from .track_map import _smooth_circ
 
 DEFAULT_CALIB = dict(
     odom_dx_std=0.30,        # m per frame      (overwritten by calibration from validation laps)
@@ -39,6 +52,16 @@ DEFAULT_CALIB = dict(
     heading_prior_floor_deg=2.0,     # minimum std of the prior
     heading_prior_inflate=10.0,      # variance inflation: the prior's error is correlated over ~1 s of frames
     heading_prior_gate_deg=30.0,     # larger deviation = the prior does not apply here (pit entry, spin)
+    # ---- condition-independent relocalisation / lost mode ----
+    reloc='sfilter',                 # 'sfilter' (needs a TrackMap) or 'legacy' (5-match chain only)
+    adaptive_sim=False,              # OFF by default: only lower the gate when conditions genuinely differ from the DB
+    adaptive_sim_max_shift=0.20,     # never lower the thresholds by more than this
+    adaptive_sim_deadband=0.03,      # ignore shifts smaller than this (matched conditions must NOT loosen the gate)
+    trusted_start_frames=50,         # the first frames start at the allowed GT pose: learn the level there
+    lost_k_relax=0.05,               # per frame while lost: odometry scale -> calibrated value
+    lost_lat_pull=0.10,              # per frame while lost: lateral offset -> racing line
+    heading_prior_inflate_lost=2.0,  # stronger heading prior while lost (VO yaw drift does the damage)
+    **DEFAULT_SF,
 )
 CHI2_3DOF_99_9 = 16.27
 
@@ -58,10 +81,27 @@ class Tracker:
         self.sn = (float('nan'), float('nan'))              # last (s, n) of the estimate (telemetry)
         self.n_clamped = 0
         self.n_heading_prior = 0
+        self.n_reseed = 0
+        self.n_updates = 0
+        self.last_reseed = False
+        self.sim_hist = deque(maxlen=200)                   # top-1 similarities of accepted updates
+        self.good_streak = 0                                # consecutive accepted retrieval updates
+        self._tree_dirty = 0
+        self.sf = None
         if track is not None:
             self.db_s, self.db_n, self.db_k = track.project(self.db_xy, self.db_yaw)
+            on = (self.db_n <= track.w_left[self.db_k] + 1.0) & (self.db_n >= -track.w_right[self.db_k] - 1.0)
+            acc, cnt = np.zeros(track.K), np.zeros(track.K)
+            np.add.at(acc, self.db_k[on], self.db_n[on])
+            np.add.at(cnt, self.db_k[on], 1.0)
+            acc, cnt = _smooth_circ(acc, 11), _smooth_circ(cnt, 11)
+            self.racing_n = np.where(cnt > 0, acc / np.maximum(cnt, 1e-9), 0.0)   # mean lateral line per station
+            if self.c.get('reloc', 'sfilter') == 'sfilter':
+                s0, _, _ = track.project1(float(pose0[0]), float(pose0[1]), float(pose0[2]))
+                self.sf = AlongTrackFilter(track, self.db_k, self.c, s0=s0)
         self.x = np.array([pose0[0], pose0[1], wrap(pose0[2])], dtype=np.float64)
-        self.k = float(self.c.get('odom_dx_scale', 1.0))   # odometry scale, estimated ONLINE (VO under/over-reads speed)
+        self.k0 = float(self.c.get('odom_dx_scale', 1.0))  # calibrated scale (the dx curve already removed the bias)
+        self.k = self.k0                                    # odometry scale, estimated ONLINE (VO under/over-reads speed)
         self.P = np.diag([0.3 ** 2, 0.3 ** 2, math.radians(1.0) ** 2, 0.15 ** 2])
         self.lost = 0
         self.chain = []
@@ -82,6 +122,10 @@ class Tracker:
         dx = self._calibrate_dx(float(np.median(self.dx_hist)))        # median of 3 kills single-frame spikes
         dx = float(np.clip(dx, 0.0, 60.0 * dt))
         dyaw = float(np.clip(dyaw, -1.5 * dt, 1.5 * dt))               # <= 1.5 rad/s
+        if self.sf is not None:
+            self.sf.predict(dx)                                        # nominal scale: independent of the EKF's k
+        if self.mode == 'RELOCALIZING' and self.sf is not None:        # a scale learnt just before getting lost is suspect
+            self.k += self.c['lost_k_relax'] * (self.k0 - self.k)
         self.v, self.w = dx / dt, dyaw / dt
         self._propagate(dx, dyaw)
 
@@ -98,6 +142,8 @@ class Tracker:
     def coast(self, dt: float):
         """Dropped / stale camera set: keep predicting with the last speed and yaw rate."""
         if dt > 0.0:
+            if self.sf is not None:
+                self.sf.predict(self.v * dt)
             self._propagate(self.v * dt, self.w * dt)
 
     def _propagate(self, dx_vo: float, dyaw: float):
@@ -145,9 +191,14 @@ class Tracker:
     # ------------------------------------------------------------------------------------------
     def update(self, cand_idx: np.ndarray, sims: np.ndarray) -> bool:
         """cand_idx: DB indices sorted by descending similarity; sims: matching cosine similarities."""
-        thr, floor = self.c['sim_thresh'], self.c.get('sim_floor', 0.80)
+        self.n_updates += 1
+        trusted = self.n_updates <= int(self.c['trusted_start_frames']) and self.mode == 'TRACKING'
+        if trusted and len(cand_idx):
+            self.sim_hist.append(float(sims[0]))              # today's similarity level, learnt at the allowed start pose
+        thr, floor = self._thresholds()
         if len(cand_idx) == 0 or sims[0] < floor:             # hard floor only: below this a match is noise
             self.lost += 1
+            self.good_streak = 0
             return False
         # Soft weighting: a match below the calibrated threshold is not thrown away, it is trusted less
         # (R grows with the square of the shortfall). Unseen places (pit lane, other light) give weak,
@@ -180,9 +231,15 @@ class Tracker:
             if self._ekf_update(z, R):
                 self.lost = 0
                 self.chain.clear()
+                self.good_streak += 1
+                if not trusted:
+                    self.sim_hist.append(float(sims[0]))
                 return True
             self.lost += 1
+            self.good_streak = 0
             return False
+
+        self.good_streak = 0
 
         # RELOCALIZING: 5 consecutive STRONG matches, each within 8 m (~2 frames of motion) of the previous one
         if sims[0] < max(floor, thr - 0.05):
@@ -203,6 +260,126 @@ class Tracker:
             return True
         self.lost += 1
         return False
+
+    def _thresholds(self):
+        """(sim_thresh, sim_floor) shifted down by how much lower today's matches score than the calibration
+        (night vs. night). Unchanged when the level matches the calibration."""
+        thr, floor = self.c['sim_thresh'], self.c.get('sim_floor', 0.80)
+        if not self.c.get('adaptive_sim', False) or len(self.sim_hist) < 20:
+            return thr, floor
+        # Only react to a REAL downward shift: today's matches scoring clearly lower than the calibration. A
+        # dead-band means matched conditions (shift ~ 0) never loosen the gate, which would admit wrong matches.
+        raw = thr - np.percentile(self.sim_hist, 20)
+        shift = float(np.clip(raw - self.c['adaptive_sim_deadband'], 0.0, self.c['adaptive_sim_max_shift']))
+        return thr - shift, floor - shift
+
+    # ------------------------------------------------------------------------------------------
+    def global_update(self, sims_all: np.ndarray) -> bool:
+        """Similarities to EVERY database frame -> along-track filter. Anchored to the EKF while tracking;
+        re-seeds the EKF when lost and the filter is sure. Returns True on a re-seed."""
+        self.last_reseed = False
+        if self.sf is None:
+            return False
+        sims_all = np.asarray(sims_all, dtype=np.float64)
+        self.sf.update(sims_all)
+        if self.mode == 'TRACKING':
+            if self.lost == 0:
+                s, _, _ = self.track.project1(self.x[0], self.x[1], self.x[2])
+                self.sf.anchor(s)
+            return False
+        if not self.sf.ready():
+            return False
+        self._reseed(sims_all)
+        return True
+
+    def _reseed(self, sims_all: np.ndarray):
+        """Along-track position from the grid filter; lateral offset + heading from the best matches there."""
+        tr, sf = self.track, self.sf
+        s_hat = sf.s_hat
+        near = np.flatnonzero(np.abs(tr.wrap_s(self.db_s - s_hat)) <= max(3.0 * sf.s_std, 5.0))
+        if len(near):
+            top = near[np.argsort(-sims_all[near])[:8]]
+            w = np.exp((sims_all[top] - sims_all[top[0]]) * 20.0)
+            w /= w.sum()
+            n = float(np.sum(w * self.db_n[top]))
+            yaw = math.atan2(float(np.sum(w * np.sin(self.db_yaw[top]))), float(np.sum(w * np.cos(self.db_yaw[top]))))
+        else:
+            k = sf.station(s_hat)
+            n, yaw = float(self.racing_n[k]), tr.heading_ref(k)[0]
+        xy = tr.to_xy(np.array([s_hat]), np.array([n]))[0]
+        self.x = np.array([float(xy[0]), float(xy[1]), wrap(yaw)])
+        k = sf.station(s_hat)
+        c, s = math.cos(tr.yaw[k]), math.sin(tr.yaw[k])
+        Rrot = np.array([[c, -s], [s, c]])
+        self.P = np.zeros((4, 4))
+        self.P[:2, :2] = Rrot @ np.diag([max(sf.s_std, 2.0) ** 2, 2.0 ** 2]) @ Rrot.T
+        self.P[2, 2] = math.radians(3.0) ** 2
+        self.P[3, 3] = 0.05 ** 2
+        self.k = self.k0
+        self.dx_hist.clear()
+        self.lost = 0
+        self.good_streak = 0                                   # must re-earn trust before feeding the memory
+        self.chain = []
+        sf.hist.clear()
+        self.n_reseed += 1
+        self.last_reseed = True
+
+    def miss(self):
+        """No usable database candidate this frame."""
+        self.lost += 1
+        self.good_streak = 0
+
+    # ------------------------------------------------------------------------------------------
+    def memory_ok(self, mc: dict) -> bool:
+        """Is the current estimate trustworthy enough to be stored in the experience memory?"""
+        if self.track is None or self.mode != 'TRACKING' or self.lost != 0:
+            return False
+        if self.good_streak < int(mc['mem_min_streak']):
+            return False
+        if math.sqrt(max(float(np.linalg.eigvalsh(self.P[:2, :2]).max()), 0.0)) > mc['mem_max_pos_std']:
+            return False
+        if self.sf is not None:
+            s, _, _ = self.track.project1(self.x[0], self.x[1], self.x[2])
+            if abs(float(self.track.wrap_s(self.sf.s_hat - s))) > mc['mem_sf_agree_m'] or self.sf.mass < mc['mem_sf_mass']:
+                return False
+        return True
+
+    def db_put(self, j: int, x: float, y: float, yaw: float):
+        """Append (j == current size) or overwrite database entry j. The KD-tree is rebuilt every 25 changes;
+        until then a new entry is simply not a gate candidate yet (never a wrong one)."""
+        if j == len(self.db_xy):
+            self.db_xy = np.vstack([self.db_xy, [[x, y]]])
+            self.db_yaw = np.append(self.db_yaw, yaw)
+        else:
+            self.db_xy[j] = (x, y)
+            self.db_yaw[j] = yaw
+        if self.track is not None:
+            s, n, k = self.track.project1(x, y, yaw)
+            if j == len(self.db_s):
+                self.db_s, self.db_n = np.append(self.db_s, s), np.append(self.db_n, n)
+                self.db_k = np.append(self.db_k, k).astype(np.int64)
+            else:
+                self.db_s[j], self.db_n[j], self.db_k[j] = s, n, k
+            if self.sf is not None:
+                self.sf.set_entry(j, k)
+        self._tree_dirty += 1
+        if self._tree_dirty >= 25:
+            self.tree = cKDTree(self.db_xy)
+            self._tree_dirty = 0
+
+    def kidnap(self, ds_m: float):
+        """Stress test only: move the whole estimate (EKF + along-track belief) ds_m metres along the track,
+        keeping its confidence, i.e. the estimator is confidently wrong. Recovery must come from the filter."""
+        if self.track is not None:
+            s, n, k = self.track.project1(self.x[0], self.x[1], self.x[2])
+            dev = wrap(self.x[2] - self.track.yaw[k])
+            xy = self.track.to_xy(np.array([s + ds_m]), np.array([n]))[0]
+            _, _, k2 = self.track.project1(float(xy[0]), float(xy[1]))
+            self.x = np.array([float(xy[0]), float(xy[1]), wrap(self.track.yaw[k2] + dev)])
+            if self.sf is not None:
+                self.sf.shift(ds_m)
+        else:
+            self.x[:2] += ds_m * np.array([math.cos(self.x[2]), math.sin(self.x[2])])
 
     def _ekf_update(self, z: np.ndarray, R: np.ndarray) -> bool:
         y = np.array([z[0] - self.x[0], z[1] - self.x[1], wrap(z[2] - self.x[2])])
@@ -247,6 +424,8 @@ class Tracker:
             self._heading_prior(k, n)
         s, n, k = self.track.project1(self.x[0], self.x[1], self.x[2])
         n_new = self._constrain_lateral(k, n)
+        if self.mode == 'RELOCALIZING' and self.sf is not None and self.track.on_main(k, n_new):
+            n_new += self.c['lost_lat_pull'] * (float(self.racing_n[k]) - n_new)    # no lateral info while lost
         if n_new != n:
             self.x[:2] += (n_new - n) * self.track.nrm[k]
             self.n_clamped += 1
@@ -268,7 +447,9 @@ class Tracker:
             return
         ref, std = self.track.heading_ref(k)
         std = max(std, math.radians(self.c['heading_prior_floor_deg']))
-        R = std * std * self.c['heading_prior_inflate']
+        lost_mode = self.mode == 'RELOCALIZING' and self.sf is not None
+        infl = self.c['heading_prior_inflate_lost'] if lost_mode else self.c['heading_prior_inflate']
+        R = std * std * infl
         y = wrap(ref - self.x[2])
         if abs(y) > math.radians(self.c['heading_prior_gate_deg']):
             return

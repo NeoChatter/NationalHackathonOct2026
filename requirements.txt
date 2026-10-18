@@ -6,3 +6,4 @@ numpy
 opencv-python
 h5py
 scipy
+pandas

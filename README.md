@@ -97,12 +97,18 @@ This is how the fusion weaknesses were isolated instead of guessing. Requires a 
 
 ## Repository layout
 
+> The layout below is the `shubi` branch pipeline (milestones `rmse-10.426-shubi`, `rmse-8.684-shubi`).
+> The sections above describe the original `main` pipeline.
+
 | path | |
 |---|---|
-| `Scripts/1_build_dataset.py` | MCAP → synchronized HDF5 training cache |
-| `Scripts/2_train_model.py` | `RacingLocNet` training + neural place DB → checkpoint |
-| `Scripts/3_causal_infer.py` | causal neural EKF inference (sweep-tuned trust) → `submission.csv` |
-| `Scripts/4_diagnostics.py` | offline GT-assisted diagnostics + parameter sweep (not in submission path) |
+| `Scripts/1_build_dataset.py` | bag → HDF5 cache (images, GT poses, per-marker track borders); `--export-gt` |
+| `Scripts/2_train.py` | train PlaceNet + OdomNet → checkpoint (DB, calibration, track map, preprocessing) |
+| `Scripts/3_calibrate.py` | odometry bias curve + track map into an existing checkpoint (no retraining) |
+| `Scripts/4_infer.py` | causal inference → submission + telemetry (+ stress hooks) |
+| `Scripts/5_evaluate.py` | score (same rules as `tools/evaluate.py`) + error slices + DB coverage → JSON |
+| `Scripts/6_stress_test.py` | robustness suite (dusk, lighting, image quality, sensor faults, kidnap) |
+| `Scripts/lib/` | shared library: models, data, track map, filters, memory, perturbations, metrics, provenance |
 | `tools/extract_gt.py` | extract ground-truth poses from `/tf` to CSV |
 | `tools/evaluate.py` | score a submission against ground truth |
 | `brainstorming_and_diagnostics.md` | milestone-by-milestone problem → diagnosis → fix → benefit log |
@@ -117,28 +123,39 @@ This is how the fusion weaknesses were isolated instead of guessing. Requires a 
 ## Usage
 
 ```bash
-pip install torch torchvision mcap mcap-ros2-support numpy opencv-python h5py
+pip install -r requirements.txt
+BAG=Data/c0_2026-10-13_22-53-42_camloc_0.mcap
 
-# 1. Build the training cache from the bag
-python Scripts/1_build_dataset.py data/c0_2026-10-13_22-53-42_camloc_0.mcap --output data/training_cache.h5
-
-# 2. Train (on a GPU server); produces the checkpoint
-python Scripts/2_train_model.py --data-h5 data/training_cache.h5 --checkpoint checkpoints/racing_model.pt
-
-# 3. Causal inference -> submission.csv (sweep-tuned trust is the default)
-python Scripts/3_causal_infer.py data/c0_2026-10-13_22-53-42_camloc_0.mcap \
-    --checkpoint checkpoints/racing_model.pt --output submission.csv
-
-# Validation-only run on the held-out laps
-python Scripts/3_causal_infer.py data/...mcap --checkpoint checkpoints/racing_model.pt --val-only
-
-# Offline diagnostics + parameter sweep (checkpoint must be trained WITHOUT --full-train)
-python Scripts/4_diagnostics.py --data-h5 data/training_cache.h5 --checkpoint checkpoints/racing_model.pt
-
-# Score
-python tools/extract_gt.py data/c0_2026-10-13_22-53-42_camloc_0.mcap gt.csv
-python tools/evaluate.py gt.csv submission.csv
+# 1. bag -> cache (+ full GT CSV)
+python Scripts/1_build_dataset.py $BAG --output data/training_cache.h5 --export-gt data/gt.csv
+# 2. train a condition-robust model (GPU)
+python Scripts/2_train.py --data-h5 data/training_cache.h5 --checkpoint checkpoints/robust.pt \
+    --clahe --norm robust --aug structured --seed 0
+# 3. odometry bias curve + track map
+python Scripts/3_calibrate.py --checkpoint checkpoints/robust.pt --output checkpoints/robust_cal.pt \
+    --data-h5 data/training_cache.h5 --plot checkpoints/robust_track.png
+# 4. causal inference on the held-out laps (or without --val-only for a submission)
+python Scripts/4_infer.py $BAG --checkpoint checkpoints/robust_cal.pt --val-only --output runs/val.csv
+# 5. score + where the error comes from
+python Scripts/5_evaluate.py --gt data/gt.csv --sub runs/val.csv --checkpoint checkpoints/robust_cal.pt --val-only
+# 6. robustness suite
+python Scripts/6_stress_test.py --mcap $BAG --checkpoint checkpoints/robust_cal.pt --gt data/gt.csv --out stress/robust
 ```
+
+Every output gets a `<file>.meta.json` sidecar (git commit, arguments, input fingerprints, and the
+checkpoint's provenance chain `build → train → calibrate`).
+
+### Fairness / data use
+
+- The only training input is the provided night session bag. The place database is built solely from its
+  training-split frames. No evaluation data is read, and no parameter is tuned against it.
+- Condition robustness is a stated design goal, handled generically: broad, symmetric augmentation over
+  weather / time-of-day / illumination (brightening and darkening equally likely), robust normalisation,
+  CLAHE, and causal self-adaptation during a run (experience memory and optional AdaBN) that use only the
+  run's own past frames and the tracker's own estimate — the same information the filter already uses.
+- The stress suite perturbs inputs to measure robustness; it is a proxy and never part of the submission
+  path, and its scenarios are generic conditions, not a reconstruction of any specific run.
+- The only runtime use of ground truth is the single allowed initial pose.
 
 ## Metric
 
